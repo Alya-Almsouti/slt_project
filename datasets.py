@@ -19,14 +19,17 @@ def load_part_kp(skeletons, confs, force_ok=False):
     thr = 0.3
     kps_with_scores = {}
     scale = None
-    
+    # print('instide load part kp: shape',len(skeletons))
+    # print(type(skeletons[0]))
+    # print(skeletons[0].shape)
     for part in ['body', 'left', 'right', 'face_all']:
         kps = []
         confidences = []
         
         for skeleton, conf in zip(skeletons, confs):
-            skeleton = skeleton[0]
-            conf = conf[0]
+            # skeleton = skeleton[0]
+            # print('singular skeleton shape: ', skeleton.shape)
+            # conf = conf[0]
             
             if part == 'body':
                 hand_kp2d = skeleton[[0] + [i for i in range(3, 11)], :]
@@ -526,7 +529,7 @@ class S2T_Dataset_news(Base_Dataset):
         return self.end_idx - self.start_idx
     
     def __getitem__(self, index):
-        num_retries = 10  
+        num_retries = 20 
 
         # skip some invalid video sample
         for _ in range(num_retries):
@@ -572,6 +575,7 @@ class S2T_Dataset_news(Base_Dataset):
         # scores (1, 133)
         
         skeletons = pose['keypoints']
+        # print('sekelton.shape: ', skeletons.shape)
         confs = pose['scores']
         skeletons_tmp = []
         confs_tmp = []

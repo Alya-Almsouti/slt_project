@@ -30,7 +30,7 @@ def main(args):
 
     wandb.init(
         project="Uni-Sign",
-        name=args.run_name if hasattr(args, 'run_name') else 'train',
+        name=args.run_name if hasattr(args, 'run_name') else 'FullClips',
         config=vars(args)
     )
 
@@ -40,8 +40,8 @@ def main(args):
     print(train_data)
     train_sampler = torch.utils.data.distributed.DistributedSampler(train_data,shuffle=True)
     train_dataloader = DataLoader(train_data,
-                                 batch_size=args.batch_size, 
-                                 num_workers=args.num_workers, 
+                                 batch_size=1, 
+                                 num_workers=2, 
                                  collate_fn=train_data.collate_fn,
                                  sampler=train_sampler, 
                                  pin_memory=args.pin_mem,
@@ -52,8 +52,8 @@ def main(args):
     print(dev_data)
     dev_sampler = torch.utils.data.distributed.DistributedSampler(dev_data,shuffle=False)
     dev_dataloader = DataLoader(dev_data,
-                                 batch_size=args.batch_size,
-                                 num_workers=args.num_workers, 
+                                 batch_size=1,
+                                 num_workers=2, 
                                  collate_fn=dev_data.collate_fn,
                                  sampler=dev_sampler, 
                                  pin_memory=args.pin_mem)
