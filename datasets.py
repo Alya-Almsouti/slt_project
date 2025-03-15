@@ -506,7 +506,7 @@ class S2T_Dataset_news(Base_Dataset):
             self.annotation = json.load(f)
        
         self.annotation = self.annotation[:100]
-        if self.args.dataset == "CSL_News":
+        if self.args.dataset == "Open_ASL": #self.args.dataset == "CSL_News" or self.args.dataset == "Open_ASL"
             self.pose_dir = pose_dirs[args.dataset]
             self.rgb_dir = rgb_dirs[args.dataset]
       

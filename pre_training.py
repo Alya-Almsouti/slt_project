@@ -38,27 +38,60 @@ def main(args):
     train_data = S2T_Dataset_news(path=train_label_paths[args.dataset], 
                                   args=args, phase='train')
     print(train_data)
-    train_sampler = torch.utils.data.distributed.DistributedSampler(train_data,shuffle=True)
+    
+    #train_sampler = torch.utils.data.distributed.DistributedSampler(train_data,shuffle=True)
+    if args.distributed:
+        train_sampler = torch.utils.data.distributed.DistributedSampler(train_data, shuffle=True)
+    else:
+        train_sampler = None  # Disable DistributedSampler
+
+    # train_dataloader = DataLoader(train_data,
+    #                              batch_size=1, 
+    #                              num_workers=2, 
+    #                              collate_fn=train_data.collate_fn,
+    #                              sampler=train_sampler, 
+    #                              pin_memory=args.pin_mem,
+    #                              drop_last=True)
+        
     train_dataloader = DataLoader(train_data,
-                                 batch_size=1, 
-                                 num_workers=2, 
-                                 collate_fn=train_data.collate_fn,
-                                 sampler=train_sampler, 
-                                 pin_memory=args.pin_mem,
-                                 drop_last=True)
+                              batch_size=1, 
+                              num_workers=2, 
+                              collate_fn=train_data.collate_fn,
+                              sampler=train_sampler if args.distributed else None,  
+                              shuffle=not args.distributed,  # Enable shuffle if not distributed
+                              pin_memory=args.pin_mem,
+                              drop_last=True)
+
+        
 
     dev_data = S2T_Dataset_news(path=dev_label_paths[args.dataset], 
                                 args=args, phase='dev')
     print(dev_data)
-    dev_sampler = torch.utils.data.distributed.DistributedSampler(dev_data,shuffle=False)
+    #dev_sampler = torch.utils.data.distributed.DistributedSampler(dev_data,shuffle=False)
+    if args.distributed:
+        dev_sampler = torch.utils.data.distributed.DistributedSampler(dev_data, shuffle=False)
+    else:
+        dev_sampler = None
+
+    # dev_dataloader = DataLoader(dev_data,
+    #                              batch_size=1,
+    #                              num_workers=2, 
+    #                              collate_fn=dev_data.collate_fn,
+    #                              sampler=dev_sampler, 
+    #                              pin_memory=args.pin_mem)
+        
     dev_dataloader = DataLoader(dev_data,
-                                 batch_size=1,
-                                 num_workers=2, 
-                                 collate_fn=dev_data.collate_fn,
-                                 sampler=dev_sampler, 
-                                 pin_memory=args.pin_mem)
+                             batch_size=1,
+                             num_workers=2, 
+                             collate_fn=dev_data.collate_fn,
+                             sampler=dev_sampler if args.distributed else None, 
+                             shuffle=not args.distributed,  # Enable shuffle if no distributed training
+                             pin_memory=args.pin_mem)
+
 
     print(f"Creating model:")
+    torch.cuda.empty_cache()  # Free unused GPU memory
+
     model = Uni_Sign(
                     args=args,
                     )
@@ -257,7 +290,7 @@ def evaluate(args, data_loader, model, model_without_ddp):
     tgt_pres = pad_sequence(tgt_pres,batch_first=True,padding_value=padding_value)
     tgt_pres = tokenizer.batch_decode(tgt_pres, skip_special_tokens=True)
             
-    if args.dataset == 'CSL_News':
+    if args.dataset == 'CSL_News' or args.dataset == 'Open_ASL':
         tgt_pres = [' '.join(list(r.replace(" ",'').replace("\n",''))) for r in tgt_pres]
         tgt_refs = [' '.join(list(r.replace("，", ',').replace("？","?").replace(" ",''))) for r in tgt_refs]
 
@@ -289,4 +322,7 @@ if __name__ == '__main__':
     print(args)
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+    if torch.cuda.device_count() < 2:  # If only one GPU, disable distributed training
+        args.distributed = False
+
     main(args)

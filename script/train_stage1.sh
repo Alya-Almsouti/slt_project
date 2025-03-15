@@ -1,7 +1,7 @@
 output_dir=out/stage1_pretraining
 
-deepspeed --include localhost:0,1 --master_port 29511 pre_training.py \
-   --batch-size 16 \
+deepspeed --include localhost:0 --master_port 29511 pre_training.py \
+   --batch-size 1 \
    --gradient-accumulation-steps 8 \
    --epochs 20 \
    --opt AdamW \
