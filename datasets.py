@@ -609,7 +609,7 @@ class VidText_Dataset(Base_Dataset):
         self.annotations = pd.read_table(path, low_memory=False)
         print(self.annotations.columns)
         self.transform = transform
-        self.new_size = 128
+        self.new_size = 224
         if self.transform is None:
             self.transform = transforms.Compose([
                 transforms.Resize((self.new_size, self.new_size)),  # Resize frames to 128x128

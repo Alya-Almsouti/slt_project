@@ -5,13 +5,13 @@ import torch.utils.checkpoint
 import contextlib
 import torchvision
 from einops import rearrange
-
 import math
 from stgcn_layers import Graph, get_stgcn_chain
 from deformable_attention_2d import DeformableAttention2D
 from transformers import MT5ForConditionalGeneration, T5Tokenizer 
 import warnings
 from config import mt5_path
+from pytorch_i3d.pytorch_i3d import InceptionI3d
 
 def _no_grad_trunc_normal_(tensor, mean, std, a, b):
     # Cut & paste from PyTorch official master until it's in a few official releases - RW
@@ -68,6 +68,92 @@ def trunc_normal_(tensor, mean=0., std=1., a=-2., b=2.):
         >>> nn.init.trunc_normal_(w)
     """
     return _no_grad_trunc_normal_(tensor, mean, std, a, b)
+
+
+class Base_Model(nn.Module):
+    def __init__(self, args):
+        super(Base_Model, self).__init__()
+        self.args = args
+        self.lang = 'English'
+
+        self.video_proj = nn.Linear(1024, 768)
+        self.apply(self._init_weights)
+
+        #TEncoder head
+        self.i3d_encoder = InceptionI3d(num_classes=400, in_channels=3)
+        i3d_pretrained_path ='pytorch_i3d/models/rgb_imagenet.pt'
+        self.i3d_encoder.load_state_dict(torch.load(i3d_pretrained_path))
+        self.i3d_encoder.avg_pool = nn.Identity()
+        self.i3d_encoder.logits = nn.Identity()
+        # To text model
+        self.mt5_model = MT5ForConditionalGeneration.from_pretrained(mt5_path)
+        self.mt5_tokenizer = T5Tokenizer.from_pretrained(mt5_path, legacy=False)
+        print('done loading')
+        
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+    
+    def forward(self, src_input, tgt_input):
+        video = src_input['video']
+        name_batch = src_input['name_batch'] #name of each video in the batch
+        src_length_batch = src_input['src_length_batch'] #tensor of number of frames for each video
+
+        video_i3d = video.permute(0, 2, 1, 3, 4) # From (B, T, 3, 128, 128) -> (B, 3, T, 128, 128)
+        features = self.i3d_encoder(video_i3d) # The output shape might be (B, feature_dim, T_i3d, H_i3d, W_i3d)b, 1024,32, 7, 7 
+        features = features.mean(dim=[-2, -1])  # Now (B, feature_dim, T_i3d)
+        features = features.transpose(1, 2)
+        T_new = features.shape[1]  # New temporal dimension from I3D
+        # Project features to 768 dimensions.
+        video_embeds = self.video_proj(features)
+        B = video_embeds.shape[0]
+        prefix_token = self.mt5_tokenizer(
+            ["Translate sign language video to English: "] * B,
+            padding="longest",
+            truncation=True,
+            return_tensors="pt",
+        ).to(video_embeds.device)
+        
+        prefix_embeds = self.mt5_model.encoder.embed_tokens(prefix_token['input_ids'])
+        
+        inputs_embeds = torch.cat([prefix_embeds, video_embeds], dim=1)
+        
+        # Build attention mask.
+        video_mask = torch.ones(B, video_embeds.shape[1], device=video_embeds.device, dtype=prefix_token['attention_mask'].dtype)
+        attention_mask = torch.cat([prefix_token['attention_mask'], video_mask], dim=1)
+        
+        # Prepare the target tokens.
+        tgt_input_tokenizer = self.mt5_tokenizer(
+            tgt_input['gt_sentence'], 
+            return_tensors="pt", 
+            padding=True,
+            truncation=True,
+            max_length=50
+        )
+        labels = tgt_input_tokenizer['input_ids']
+        labels[labels == self.mt5_tokenizer.pad_token_id] = -100
+        
+        # Forward pass through MT5.
+        out = self.mt5_model(
+            inputs_embeds=inputs_embeds,
+            attention_mask=attention_mask,
+            labels=labels.to(video_embeds.device),
+            return_dict=True
+        )
+        
+        loss = out.loss
+        
+        return {
+            'inputs_embeds': inputs_embeds,
+            'attention_mask': attention_mask,
+            'loss': loss,
+            'logits': out.logits,
+        }
 
 class Uni_Sign(nn.Module):
     def __init__(self, args):
@@ -281,7 +367,7 @@ class Uni_Sign(nn.Module):
             pool_feat = gcn_feat.mean(-1).transpose(1,2) #B,T,C
             features.append(pool_feat)
 
-        # feature is a list of 4 tensors #(1, 255, 256)
+        # feature is a list of 4 tensors eah tensor is: #(1, 255, 256)
 
         # concat sub-pose feature across token dimension
         inputs_embeds = torch.cat(features, dim=-1) + self.part_para
