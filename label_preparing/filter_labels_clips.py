@@ -4,8 +4,12 @@ from pathlib import Path
 from multiprocessing import Pool, cpu_count
 from tqdm import tqdm  # For progress bar
 
+<<<<<<< Updated upstream:label_preparing/filter_labels_clips.py
 name = 'alya.almsouti'
 # Input and output file paths
+=======
+name = 'amal.saqib'
+>>>>>>> Stashed changes:label_preparing/filter_labels_OpenAsl.py
 input_path = Path(f"/l/users/{name}/AI702/Datasets/ClipsDataset/openasl-v1.0.tsv")
 output_path = Path(f"/l/users/{name}/AI702/Datasets/ClipsDataset/Filtered_openasl-v1.0.tsv")
 pkl_path = Path(f"/l/users/{name}/AI702/Datasets/ClipsDataset/pose_format")  # Directory containing .pkl files

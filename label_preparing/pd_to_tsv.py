@@ -1,5 +1,12 @@
 import pandas as pd
 import json
+<<<<<<< Updated upstream:label_preparing/pd_to_tsv.py
+=======
+import os
+
+name = "amal.saqib"
+tsv_file = f"/l/users/{name}/AI702/Datasets/ClipsDataset/Filtered_openasl-v1.0.tsv" 
+>>>>>>> Stashed changes:label_preparing/tsv_to_json.py
 
 # Load the TSV file
 tsv_file = "Filtered_openasl-v1.0.tsv"  # Replace with your TSV file path

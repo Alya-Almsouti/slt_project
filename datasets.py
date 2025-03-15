@@ -502,11 +502,31 @@ class S2T_Dataset_news(Base_Dataset):
 
         path = pathlib.Path(path)
 
-        with path.open(encoding='utf-8') as f:
+        # ✅ DEBUGGING: Print first few lines of file before loading
+        with path.open("r", encoding="utf-8") as f:
+            raw_text = f.read()
+            print("🔹 First 500 characters of the file:", raw_text[:500])  # Print first few characters
+
+        # ✅ DEBUGGING: Try loading the JSON
+        with path.open("r", encoding="utf-8") as f:
+            try:
+                self.annotation = json.load(f)
+            except json.JSONDecodeError as e:
+                print(f"❌ JSON Decode Error: {e}")
+                exit()
+
+        print(f"✅ Successfully loaded dataset with {len(self.annotation)} samples.")
+        print("🔹 First 3 samples:", self.annotation[:3])  # Print first 3 samples
+
+        with path.open(encoding='utf-8', errors="replace") as f:
             self.annotation = json.load(f)
        
+<<<<<<< Updated upstream
         self.annotation = self.annotation[:100]
         if self.args.dataset == "Open_ASL": #self.args.dataset == "CSL_News" or self.args.dataset == "Open_ASL"
+=======
+        if self.args.dataset == "CSL_News" or self.args.dataset == "Open_ASL":
+>>>>>>> Stashed changes
             self.pose_dir = pose_dirs[args.dataset]
             self.rgb_dir = rgb_dirs[args.dataset]
       

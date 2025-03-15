@@ -307,6 +307,11 @@ class Uni_Sign(nn.Module):
             'loss':loss,
         }
 
+        # In models.py, inside forward()
+        print(f"Pose Encoded Features: {inputs_embeds.shape}")  # Expected: [batch, 256, 768]
+        print(f"MT5 Input IDs: {tgt_input_tokenizer['input_ids'].shape}")  # Expected: [batch, 50]
+
+
         return stack_out
     
     @torch.no_grad()

@@ -5,6 +5,7 @@ train_label_paths = {
                     "CSL_News": f"/l/users/amal.saqib/AI702/Datasets/CSLNews/CSL_News_Labels.json",
                     "CSL_Daily": "./data/CSL_Daily/labels.train",
                     "WLASL": "./data/WLASL/labels-2000.train",
+<<<<<<< Updated upstream
                     "Open_ASL": f"/l/users/{name}/AI702/Datasets/ClipsDataset/small_openasl.json"
                     }
 
@@ -20,6 +21,23 @@ test_label_paths = {
                     "CSL_Daily": "./data/CSL_Daily/labels.train",
                     "WLASL": "./data/WLASL/labels-2000.train",
                     "Open_ASL": f"/l/users/{name}/AI702/Datasets/ClipsDataset/small_openasl.json"
+=======
+                    "Open_ASL": f"/l/users/{name}/AI702/Datasets/ClipsDataset/Labels.json"
+                    }
+
+dev_label_paths = {
+                    "CSL_News": f"/l/users/{name}/AI702/Datasets/ClipsDataset/Labels.json",
+                    "CSL_Daily": "./data/CSL_Daily/labels.dev",
+                    "WLASL": "./data/WLASL/labels-2000.dev",
+                    "Open_ASL": f"/l/users/{name}/AI702/Datasets/ClipsDataset/Labels.json"
+                    }
+
+test_label_paths = {
+                    "CSL_News": f"/l/users/{name}/AI702/Datasets/ClipsDataset/Labels.json",
+                    "CSL_Daily": "./data/CSL_Daily/labels.test",
+                    "WLASL": "./data/WLASL/labels-2000.test",
+                    "Open_ASL": f"/l/users/{name}/AI702/Datasets/ClipsDataset/Labels.json"
+>>>>>>> Stashed changes
                     }
 
 
