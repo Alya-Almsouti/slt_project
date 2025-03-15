@@ -80,27 +80,29 @@ class Uni_Sign(nn.Module):
         # project (x,y,score) to hidden dim
         hidden_dim = args.hidden_dim
         self.proj_linear = nn.ModuleDict()
+        print('1')
         for mode in self.modes:
             self.graph[mode] = Graph(layout=f'{mode}', strategy='distance', max_hop=1)
             A.append(torch.tensor(self.graph[mode].A, dtype=torch.float32, requires_grad=False))
             self.proj_linear[mode] = nn.Linear(3, 64)
-
+        print('memorykill2')
         self.gcn_modules = nn.ModuleDict()
         self.fusion_gcn_modules = nn.ModuleDict()
         spatial_kernel_size = A[0].size(0)
+        print('memorykill3')
         for index, mode in enumerate(self.modes):
             self.gcn_modules[mode], final_dim = get_stgcn_chain(64, 'spatial', (1, spatial_kernel_size), A[index].clone(), True)
             self.fusion_gcn_modules[mode], _ = get_stgcn_chain(final_dim, 'temporal', (5, spatial_kernel_size), A[index].clone(), True)
-        
+        print('memorykill4')
         self.gcn_modules['left'] = self.gcn_modules['right']
         self.fusion_gcn_modules['left'] = self.fusion_gcn_modules['right']
         self.proj_linear['left'] = self.proj_linear['right']
-
+        print('memorykill5')
         self.part_para = nn.Parameter(torch.zeros(hidden_dim*len(self.modes)))
         self.pose_proj = nn.Linear(256*4, 768)
         
         self.apply(self._init_weights)
-        
+        print('memorykill6')
         if "CSL" in self.args.dataset:
             self.lang = 'Chinese'
         else:
@@ -135,8 +137,11 @@ class Uni_Sign(nn.Module):
                 if isinstance(layer, nn.Conv1d):
                     nn.init.constant_(layer.weight, 0)
                     nn.init.constant_(layer.bias, 0)
-
+        print('memorykill7')
+        print(f"Memory allocated: {torch.cuda.memory_allocated() / 1e9} GB")
         self.mt5_model = MT5ForConditionalGeneration.from_pretrained(mt5_path)
+        print(f"Memory allocated: {torch.cuda.memory_allocated() / 1e9} GB")
+        print('memorykill8')
         self.mt5_tokenizer = T5Tokenizer.from_pretrained(mt5_path, legacy=False)
     
         
@@ -267,7 +272,7 @@ class Uni_Sign(nn.Module):
         inputs_embeds = self.pose_proj(inputs_embeds)
 
         prefix_token = self.mt5_tokenizer(
-                                [f"Translate sign language video to {self.lang}: "] * len(tgt_input["gt_sentence"]),
+                                [f"Translate sign language video to English: "] * len(tgt_input["gt_sentence"]),
                                 padding="longest",
                                 truncation=True,
                                 return_tensors="pt",
