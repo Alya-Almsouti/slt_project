@@ -137,6 +137,7 @@ class Uni_Sign(nn.Module):
                     nn.init.constant_(layer.bias, 0)
 
         self.mt5_model = MT5ForConditionalGeneration.from_pretrained(mt5_path)
+        # self.mt5_model = MT5ForConditionalGeneration.from_pretrained(mt5_path).to(torch.float32)
         self.mt5_tokenizer = T5Tokenizer.from_pretrained(mt5_path, legacy=False)
     
         
@@ -204,6 +205,20 @@ class Uni_Sign(nn.Module):
         return gcn_feat
 
     def forward(self, src_input, tgt_input):
+        """ src_input : dict dict_keys([
+        'body' tensor(1, 255, 9, 3) #second dimension is different between
+        'attention_mask', tensor (1, 255)
+        'name_batch', list (1)
+        'src_length_batch', tensor(1)
+        'left', 
+        'right',
+        'face_all'])
+        tgt_input : dict dict_keys(['gt_sentence' list
+        , 'gt_gloss' list
+        ])
+        """
+        print(src_input['body'].shape)
+        # print('in forward')
         # RGB branch forward
         if self.args.rgb_support:
             rgb_support_dict = {}
@@ -261,43 +276,57 @@ class Uni_Sign(nn.Module):
             gcn_feat = self.fusion_gcn_modules[part](gcn_feat) #B,C,T,V
             pool_feat = gcn_feat.mean(-1).transpose(1,2) #B,T,C
             features.append(pool_feat)
-        
+
+        # feature is a list of 4 tensors #(1, 255, 256)
+
         # concat sub-pose feature across token dimension
         inputs_embeds = torch.cat(features, dim=-1) + self.part_para
-        inputs_embeds = self.pose_proj(inputs_embeds)
+        inputs_embeds = self.pose_proj(inputs_embeds) #(1, 225, 768)
 
         prefix_token = self.mt5_tokenizer(
                                 [f"Translate sign language video to {self.lang}: "] * len(tgt_input["gt_sentence"]),
                                 padding="longest",
                                 truncation=True,
                                 return_tensors="pt",
-                            ).to(inputs_embeds.device)
-        
-        prefix_embeds = self.mt5_model.encoder.embed_tokens(prefix_token['input_ids'])
-        inputs_embeds = torch.cat([prefix_embeds, inputs_embeds], dim=1)
+                            ).to(inputs_embeds.device) # 'transformers.tokenization_utils_base.BatchEncoding'
+
+        prefix_embeds = self.mt5_model.encoder.embed_tokens(prefix_token['input_ids']) # tensor(1, 8, 768)
+
+        inputs_embeds = torch.cat([prefix_embeds, inputs_embeds], dim=1) #tensor(1, 233, 768)
 
         attention_mask = torch.cat([prefix_token['attention_mask'],
-                                    src_input['attention_mask']], dim=1)
+                                    src_input['attention_mask']], dim=1) #tensor(1, 233)
 
         tgt_input_tokenizer = self.mt5_tokenizer(tgt_input['gt_sentence'], 
                                                 return_tensors="pt", 
                                                 padding=True,
                                                 truncation=True,
-                                                max_length=50)
+                                                max_length=50) #'transformers.tokenization_utils_base.BatchEncoding'
             
-        labels = tgt_input_tokenizer['input_ids']
+        # print('type tgt_input_tokenizer input_ ids: ', type(tgt_input_tokenizer['inputs_ids']))
+
+        labels = tgt_input_tokenizer['input_ids'] #tensor(1, 28)
         labels[labels == self.mt5_tokenizer.pad_token_id] = -100
-        
-        out = self.mt5_model(inputs_embeds = inputs_embeds,
-                    attention_mask = attention_mask,
-                    labels = labels.to(inputs_embeds.device),
-                    return_dict = True,
-                    )
-        
+
+        out = self.mt5_model(
+            inputs_embeds=inputs_embeds,
+            attention_mask=attention_mask,
+            labels=labels.to(inputs_embeds.device),
+            return_dict=True)
+        # with torch.cuda.amp.autocast(dtype=torch.float32):  # Enables safe FP16
+        #     out = self.mt5_model(
+        #         inputs_embeds=inputs_embeds,
+        #         attention_mask=attention_mask,
+        #         labels=labels.to(inputs_embeds.device),
+        #         return_dict=True
+        #     )
         label = labels.reshape(-1)
-        out_logits = out['logits']
-        logits = out_logits.reshape(-1,out_logits.shape[-1])
+        out_logits = out['logits'] # tensor (1, 28, 250112) second dimension is changing
+        print(out_logits.shape)
+        logits = out_logits.reshape(-1,out_logits.shape[-1]) # nans
+
         loss_fct = torch.nn.CrossEntropyLoss(label_smoothing=self.args.label_smoothing, ignore_index=-100)
+
         loss = loss_fct(logits, label.to(out_logits.device, non_blocking=True))
 
         stack_out = {

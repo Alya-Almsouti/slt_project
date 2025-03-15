@@ -27,9 +27,9 @@ def load_part_kp(skeletons, confs, force_ok=False):
         confidences = []
         
         for skeleton, conf in zip(skeletons, confs):
-            # skeleton = skeleton[0]
+            skeleton = skeleton[0]
             # print('singular skeleton shape: ', skeleton.shape)
-            # conf = conf[0]
+            conf = conf[0]
             
             if part == 'body':
                 hand_kp2d = skeleton[[0] + [i for i in range(3, 11)], :]
@@ -529,7 +529,7 @@ class S2T_Dataset_news(Base_Dataset):
         return self.end_idx - self.start_idx
     
     def __getitem__(self, index):
-        num_retries = 20 
+        num_retries = 10 
 
         # skip some invalid video sample
         for _ in range(num_retries):
