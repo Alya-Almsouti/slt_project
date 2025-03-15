@@ -19,16 +19,13 @@ def load_part_kp(skeletons, confs, force_ok=False):
     thr = 0.3
     kps_with_scores = {}
     scale = None
-    # print('instide load part kp: shape',len(skeletons))
-    # print(type(skeletons[0]))
-    # print(skeletons[0].shape)
+    
     for part in ['body', 'left', 'right', 'face_all']:
         kps = []
         confidences = []
         
         for skeleton, conf in zip(skeletons, confs):
             skeleton = skeleton[0]
-            # print('singular skeleton shape: ', skeleton.shape)
             conf = conf[0]
             
             if part == 'body':
@@ -505,7 +502,6 @@ class S2T_Dataset_news(Base_Dataset):
         with path.open(encoding='utf-8') as f:
             self.annotation = json.load(f)
        
-        self.annotation = self.annotation[:100]
         if self.args.dataset == "CSL_News":
             self.pose_dir = pose_dirs[args.dataset]
             self.rgb_dir = rgb_dirs[args.dataset]
@@ -517,19 +513,19 @@ class S2T_Dataset_news(Base_Dataset):
                                     transforms.ToTensor(),
                                     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]), 
                                     ])
-        
+
         if phase == 'train':
             self.start_idx = int(sum_sample * 0.0)
-            self.end_idx = int(sum_sample * 0.9)
+            self.end_idx = int(sum_sample * 0.99)
         else:
-            self.start_idx = int(sum_sample * 0.9)
+            self.start_idx = int(sum_sample * 0.99)
             self.end_idx = int(sum_sample)
         
     def __len__(self):
         return self.end_idx - self.start_idx
     
     def __getitem__(self, index):
-        num_retries = 10 
+        num_retries = 10  
 
         # skip some invalid video sample
         for _ in range(num_retries):
@@ -575,8 +571,9 @@ class S2T_Dataset_news(Base_Dataset):
         # scores (1, 133)
         
         skeletons = pose['keypoints']
-        # print('sekelton.shape: ', skeletons.shape)
         confs = pose['scores']
+        confs = np.expand_dims(confs, axis=1)
+        skeletons = np.expand_dims(skeletons, axis=1)
         skeletons_tmp = []
         confs_tmp = []
         

@@ -413,6 +413,8 @@ def init_deepspeed(args, model, optimizer, lr_scheduler):
     ds_config['train_micro_batch_size_per_gpu'] = args.batch_size
     ds_config['gradient_accumulation_steps'] = args.gradient_accumulation_steps
     ds_config['gradient_clipping'] = args.gradient_clipping
+    # ds_config['reduce_bucket_size'] = 200000000
+    # ds_config['allgather_bucket_size'] = 200000000
     # ds_config['bf16'] = {"enabled": False}
     # ds_config['fp16'] = {"enabled": True}
 
@@ -428,7 +430,7 @@ def init_deepspeed(args, model, optimizer, lr_scheduler):
             config=ds_config,
             lr_scheduler=lr_scheduler,
             dist_init_required=True)
-    
+    print("DeepSpeed initialized.")
     return _wrapped_model, _optimizer, _lr_sched
 
 def set_seed(seed):

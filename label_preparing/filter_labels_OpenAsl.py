@@ -14,28 +14,33 @@ def is_valid_entry(vid):
     return (pkl_path / f"{vid}.pkl").exists()
 
 def process_chunk(chunk):
-    return chunk[chunk['vid'].apply(is_valid_entry)]
+    # Filter rows that have a valid .pkl file
+    valid = chunk[chunk['vid'].apply(is_valid_entry)]
+    # Compute duration from 'start' and 'end' columns (converted to timedelta)
+    # durations = pd.to_timedelta(valid['end']) - pd.to_timedelta(valid['start'])
+    # Filter rows where duration is less than 10 seconds
+    # valid = valid[durations < pd.Timedelta(seconds=10)]
+    return valid
 
 def main():
     df = pd.read_csv(input_path, sep="\t")
     
-    # Ensure the number of workers is within a valid range
-    num_workers = min(cpu_count(), len(df))  # Avoid excessive workers
-    chunk_size = (len(df) + num_workers - 1) // num_workers  # Handles uneven chunking
+    # Determine an appropriate number of workers
+    num_workers = min(cpu_count(), len(df))
+    chunk_size = (len(df) + num_workers - 1) // num_workers
 
     # Split data into chunks
     chunks = [df.iloc[i:i + chunk_size] for i in range(0, len(df), chunk_size)]
 
-    # Use multiprocessing Pool
+    # Process chunks in parallel
     with Pool(num_workers) as pool:
         results = pool.map(process_chunk, chunks)
 
-    # Concatenate results
+    # Concatenate the filtered results
     filtered_df = pd.concat(results, ignore_index=True)
 
     # Save the filtered data
     filtered_df.to_csv(output_path, sep="\t", index=False)
-
     print(f"Filtering complete! {len(filtered_df)} valid entries saved to {output_path}")
 
 if __name__ == "__main__":
