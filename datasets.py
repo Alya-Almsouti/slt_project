@@ -12,7 +12,13 @@ from decord import VideoReader, cpu
 import json
 import pathlib
 from torchvision import transforms
+# import importlib
+# import config
+# importlib.reload(config)
 from config import rgb_dirs, pose_dirs
+import torchvision.transforms as transforms
+import pandas as pd
+import cv2
 
 # load sub-pose
 def load_part_kp(skeletons, confs, force_ok=False):
@@ -310,7 +316,7 @@ def load_support_rgb_dict(tmp, skeletons, confs, full_path, data_transform):
         right_sampled_indices = np.array([-1])
 
     # get index, images and keypoints priors
-    support_rgb_dict['left_sampled_indices'] = torch.tensor(left_sampled_indices)
+    support_rgb_dict['left_sampled_indices'] = torch.tensor(left_sampled_indices) #number of frames sampled from the keypoints
     support_rgb_dict['left_hands'] = left_hands
     support_rgb_dict['left_skeletons_norm'] = torch.tensor(left_skeletons_norm)
     
@@ -498,14 +504,13 @@ class S2T_Dataset_news(Base_Dataset):
         self.max_length = args.max_length
 
         path = pathlib.Path(path)
+        print(self.max_length)
 
         with path.open(encoding='utf-8') as f:
             self.annotation = json.load(f)
-       
         if self.args.dataset == "CSL_News":
             self.pose_dir = pose_dirs[args.dataset]
             self.rgb_dir = rgb_dirs[args.dataset]
-      
         else:
             raise NotImplementedError
         sum_sample = len(self.annotation)
@@ -594,3 +599,98 @@ class S2T_Dataset_news(Base_Dataset):
 
     def __str__(self):
         return f'#total {len(self)}'
+
+
+class VidText_Dataset(Base_Dataset):
+    def __init__(self, path, args, transform = None):
+        super(VidText_Dataset, self).__init__()
+        self.args = args
+        self.max_length = args.max_length
+        self.annotations = pd.read_table(path, low_memory=False)
+        print(self.annotations.columns)
+        self.transform = transform
+        self.new_size = 128
+        if self.transform is None:
+            self.transform = transforms.Compose([
+                transforms.Resize((self.new_size, self.new_size)),  # Resize frames to 128x128
+                transforms.ToTensor()
+            ])
+        
+        if self.args.dataset in ["Open_ASL"]:
+            self.video_dir = rgb_dirs[args.dataset]
+        else:
+            raise NotImplementedError("Dataset not supported")
+    
+    def __len__(self):
+        return len(self.annotations)
+    
+    def __getitem__(self, idx):
+        name_sample = self.annotations.iloc[idx]['video_name']
+        text = self.annotations.iloc[idx]['caption']
+        
+        # Load video frames
+        frames = self.load_video(f"{name_sample}.mp4")
+        
+        return name_sample, frames, text
+    
+    def load_video(self, path):
+        full_path = os.path.join(self.video_dir, path)
+        cap = cv2.VideoCapture(full_path)
+        frames = []
+        
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # Convert color format
+            frame = Image.fromarray(frame)
+            frame = self.transform(frame)  # Apply transformation  # Convert to tensor
+            frames.append(frame)
+        
+        cap.release()
+        
+        # Handle cases where frames exceed or fall short of max_length
+        num_frames = len(frames)
+        if num_frames > self.max_length:
+            selected_indices = sorted(random.sample(range(num_frames), k=self.max_length))
+            frames = [frames[i] for i in selected_indices]
+        elif num_frames < self.max_length:
+            last_frame = frames[-1] if frames else torch.zeros((3, self.new_size, self.new_size))  # Default blank frame if empty
+            frames.extend([last_frame] * (self.max_length - num_frames))
+        
+        return torch.stack(frames)
+    
+    def __str__(self):
+        return f'#total {len(self)}'
+    def collate_fn(self, batch):
+        name_batch, frames_batch, text_batch = [], [], []
+        
+        for name_sample, frames, text in batch:
+            name_batch.append(name_sample)
+            frames_batch.append(frames)
+            text_batch.append(text)
+        
+        src_input = {}
+        
+        max_len = max(len(frames) for frames in frames_batch)
+        video_length = torch.tensor([len(frames) for frames in frames_batch], dtype=torch.long)
+        
+        padded_video = [
+            torch.cat(
+                (frames, frames[-1].unsqueeze(0).expand(max_len - len(frames), -1, -1, -1)),
+                dim=0
+            ) if len(frames) < max_len else frames
+            for frames in frames_batch
+        ]
+        
+        img_batch = torch.stack(padded_video, dim=0)
+        src_input['video'] = img_batch
+        src_input['name_batch'] = name_batch
+        src_input['src_length_batch'] = video_length
+        
+        tgt_input = {
+            'gt_sentence': text_batch
+        }
+        
+        return src_input, tgt_input
+

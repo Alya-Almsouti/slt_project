@@ -496,7 +496,7 @@ def get_args_parser():
     parser.add_argument('--no-pin-mem', action='store_false', dest='pin_mem',
                         help='')
     parser.set_defaults(pin_mem=True)
-
+    parser.add_argument('--use-wandb', action='store_true')
     # deepspeed features
     parser.add_argument('--offload',
                         action='store_true',
@@ -528,7 +528,7 @@ def get_args_parser():
     parser.add_argument("--max_length", default=256, type=int)
     
     # select dataset
-    parser.add_argument("--dataset", default="CSL_Daily", choices=['CSL_News', "CSL_Daily", "WLASL"])
+    parser.add_argument("--dataset", default="Open_ASL", choices=['CSL_News', "CSL_Daily", "WLASL", "Open_ASL"])
     
     # select task
     parser.add_argument("--task", default="SLT", choices=['SLT', "ISLR", "CSLR"])

@@ -27,7 +27,6 @@ def main(args):
     # print(f"Max memory allocated: {torch.cuda.max_memory_allocated() / 1e9} GB")
     utils.init_distributed_mode_ds(args)
 
-    print(args)
     utils.set_seed(args.seed)
 
     # wandb.init(
@@ -295,7 +294,6 @@ def evaluate(args, data_loader, model, model_without_ddp):
 
 if __name__ == '__main__':
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
-    # print('NOTHING')
     parser = argparse.ArgumentParser('Uni-Sign scripts', parents=[utils.get_args_parser()])
     args = parser.parse_args()
     args.distributed = False
