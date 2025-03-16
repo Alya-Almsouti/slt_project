@@ -80,14 +80,19 @@ class Base_Model(nn.Module):
         self.apply(self._init_weights)
 
         #TEncoder head
+        print('step 1')
         self.i3d_encoder = InceptionI3d(num_classes=400, in_channels=3)
         i3d_pretrained_path ='pytorch_i3d/models/rgb_imagenet.pt'
         self.i3d_encoder.load_state_dict(torch.load(i3d_pretrained_path))
         self.i3d_encoder.avg_pool = nn.Identity()
         self.i3d_encoder.logits = nn.Identity()
+        print(f"Memory allocated: {torch.cuda.memory_allocated() / 1e9} GB")
         # To text model
+        print('step 2')
         self.mt5_model = MT5ForConditionalGeneration.from_pretrained(mt5_path)
+        print(f"Memory allocated: {torch.cuda.memory_allocated() / 1e9} GB")
         self.mt5_tokenizer = T5Tokenizer.from_pretrained(mt5_path, legacy=False)
+
         print('done loading')
         
     def _init_weights(self, m):

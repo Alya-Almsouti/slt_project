@@ -47,10 +47,12 @@ def main(args):
                                  collate_fn=dev_data.collate_fn)
 
     print(f"Creating model:")
+    print(f"Memory allocated: {torch.cuda.memory_allocated() / 1e9} GB")
     model = Base_Model(
                     args=args,
-                    )
-    model.cuda()
+                    ).cuda().to(dtype=torch.bfloat16)
+    print('done creating model')
+    print(f"Memory allocated: {torch.cuda.memory_allocated() / 1e9} GB")
     model.train()   
 
     if args.use_wandb:
@@ -58,7 +60,7 @@ def main(args):
     
     for param in model.parameters():
         if param.requires_grad:
-            param.data = param.data.to(torch.float32)
+            param.data = param.data.to(torch.bfloat16)
     
     n_parameters = utils.count_parameters_in_MB(model)
     print(f'number of params: {n_parameters}M')
@@ -89,9 +91,11 @@ def main(args):
     
 
     print(f"Start training for {args.epochs} epochs")
-
+    
     for epoch in range(0, args.epochs):
+
         train_stats = train_one_epoch(args, model, train_dataloader, optimizer, epoch)
+    
         if args.output_dir:
             checkpoint_paths = [output_dir / f'checkpoint_{epoch}.pth']
             for checkpoint_path in checkpoint_paths:
@@ -99,7 +103,36 @@ def main(args):
                     'model': get_requires_grad_dict(model),
                 }, checkpoint_path)
         test_stats = evaluate(args, dev_dataloader, model)
+        print(f"BLEU-4 of the network on the {len(dev_dataloader)} dev videos: {test_stats['bleu4']:.2f}")
+        if args.use_wandb:
+            wandb.log({**train_stats,
+                       "epoch": epoch,
+                       "BLEU-4": test_stats["bleu4"],
+                        "ROUGE": test_stats.get("rouge", 0),
+                        "Validation Loss": test_stats['loss'] })
+        if max_accuracy < test_stats["bleu4"]:
+            max_accuracy = test_stats["bleu4"]
+            if args.output_dir and utils.is_main_process():
+                checkpoint_paths = [output_dir / 'best_checkpoint.pth']
+                for checkpoint_path in checkpoint_paths:
+                    utils.save_on_master({
+                        'model': get_requires_grad_dict(model),
+                    }, checkpoint_path)
         
+        print(f'Max BLEU-4: {max_accuracy:.2f}%')
+        log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
+                     **{f'test_{k}': v for k, v in test_stats.items()},
+                     'epoch': epoch,
+                     'n_parameters': n_parameters}
+        
+        if args.output_dir and utils.is_main_process():
+            with (output_dir / "log.txt").open("a") as f:
+                f.write(json.dumps(log_stats) + "\n")
+    total_time = time.time() - start_time
+    total_time_str = str(datetime.timedelta(seconds=int(total_time)))
+    print('Training time {}'.format(total_time_str))
+    if args.use_wandb:
+        wandb.finish() 
     print('ALL good untill now')
 
 def train_one_epoch(args, model, data_loader, optimizer, epoch):
