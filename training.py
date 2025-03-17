@@ -32,7 +32,9 @@ def main(args):
         )
     train_data = VidText_Dataset(path=train_label_paths[args.dataset], 
                                   args=args)
+    print(train_label_paths[args.dataset])
     print(train_data)
+    print(len(train_data))
     train_dataloader = DataLoader(train_data,
                                  batch_size=args.batch_size, 
                                  num_workers=args.num_workers, 
@@ -145,6 +147,12 @@ def train_one_epoch(args, model, data_loader, optimizer, epoch):
 
     for step, (src_input, tgt_input) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
 
+        # if step == 5:  # Print only for the first batch
+        #     print("=== First Batch ===")
+        #     print("Source Input:", src_input)
+        #     print("Target Input:", tgt_input)
+        #     print("===================")
+
         # Convert input tensors to bfloat16 before passing them to model
         for key in src_input.keys():
             if isinstance(src_input[key], torch.Tensor):
@@ -170,6 +178,8 @@ def train_one_epoch(args, model, data_loader, optimizer, epoch):
 
         metric_logger.update(loss=loss_value)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
+
+        #break
 
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
@@ -208,6 +218,9 @@ def evaluate(args, data_loader, model):
             for i in range(len(output)):
                 tgt_pres.append(output[i])
                 tgt_refs.append(tgt_input['gt_sentence'][i])
+            
+            
+            #break
 
     tokenizer = model.mt5_tokenizer
     padding_value = tokenizer.eos_token_id

@@ -103,6 +103,20 @@ class Base_Model(nn.Module):
         elif isinstance(m, nn.LayerNorm):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
+
+    @torch.no_grad()
+    def generate(self,pre_compute_item,max_new_tokens,num_beams):
+        inputs_embeds = pre_compute_item['inputs_embeds']
+        attention_mask = pre_compute_item['attention_mask']
+    
+        out = self.mt5_model.generate(inputs_embeds = inputs_embeds,
+                                attention_mask = attention_mask,
+                                max_new_tokens=max_new_tokens,
+                                num_beams = num_beams,
+                            )
+
+        return out
+
     
     def forward(self, src_input, tgt_input):
         video = src_input['video']
@@ -152,6 +166,7 @@ class Base_Model(nn.Module):
         )
         
         loss = out.loss
+        
         
         return {
             'inputs_embeds': inputs_embeds,

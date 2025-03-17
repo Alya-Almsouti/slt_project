@@ -449,7 +449,7 @@ def get_args_parser():
     parser.add_argument('--batch-size', default=16, type=int)
     parser.add_argument('--gradient-accumulation-steps', default=8, type=int)
     parser.add_argument('--gradient-clipping', default=1., type=float)
-    parser.add_argument('--epochs', default=20, type=int)
+    parser.add_argument('--epochs', default=10, type=int)
 
     # distributed training parameters
     parser.add_argument('--world_size', default=1, type=int,

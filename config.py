@@ -1,5 +1,5 @@
 mt5_path = "./pretrained_weight/mt5-base"
-name = 'alya.almsouti'
+name = 'amal.saqib'
 # label paths
 train_label_paths = {
                     "CSL_News": f"/l/users/{name}/AI702/Datasets/ClipsDataset/Labels.json",
