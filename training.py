@@ -87,6 +87,11 @@ def main(args):
 
     # GET BACK TO THIS:
     if args.eval:
+        checkpoint_path = Path('out/base/best_checkpoint.pth')
+        print(f"✅ Loading Best Checkpoint: {checkpoint_path}")
+        checkpoint = torch.load(checkpoint_path, map_location="cuda")
+        model.load_state_dict(checkpoint['model'])
+
         print("📄 test result")
         test_stats = evaluate(args, dev_dataloader, model)
         return 
@@ -235,6 +240,8 @@ def evaluate(args, data_loader, model):
         tgt_pres = [' '.join(list(r.replace(" ", '').replace("\n", ''))) for r in tgt_pres]
         tgt_refs = [' '.join(list(r.replace("，", ',').replace("？", "?").replace(" ", ''))) for r in tgt_refs]
 
+    print('tgt_pres: ', tgt_pres)
+    print('tgt_refs:' , tgt_refs)
     bleu_dict, rouge_score = translation_performance(tgt_refs, tgt_pres)
     for k, v in bleu_dict.items():
         metric_logger.meters[k].update(v)
