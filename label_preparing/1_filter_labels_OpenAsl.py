@@ -17,9 +17,10 @@ def process_chunk(chunk):
     # Filter rows that have a valid .pkl file
     valid = chunk[chunk['vid'].apply(is_valid_entry)]
     # Compute duration from 'start' and 'end' columns (converted to timedelta)
-    # durations = pd.to_timedelta(valid['end']) - pd.to_timedelta(valid['start'])
-    # Filter rows where duration is less than 10 seconds
-    # valid = valid[durations < pd.Timedelta(seconds=10)]
+    durations = pd.to_timedelta(valid['end']) - pd.to_timedelta(valid['start'])
+
+    # Filter rows where duration is less than or equal to 10.24 seconds which means 256 frames
+    valid = valid[durations <= pd.Timedelta(seconds=10.24)]
     return valid
 
 def main():

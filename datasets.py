@@ -328,30 +328,47 @@ def load_support_rgb_dict(tmp, skeletons, confs, full_path, data_transform):
 
 
 # use split rgb video for save time
-def load_video_support_rgb(path, tmp):
-    vr = VideoReader(path, num_threads=1, ctx=cpu(0))
+def load_video_support_rgb(path, transform):
+    # vr = VideoReader(path, num_threads=1, ctx=cpu(0))
     
-    vr.seek(0)
-    buffer = vr.get_batch(tmp).asnumpy()
-    batch_image = buffer
-    del vr
+    # vr.seek(0)
+    # buffer = vr.get_batch(tmp).asnumpy()
+    # batch_image = buffer
+    # del vr
 
-    return batch_image
+    # return batch_image
+    cap = cv2.VideoCapture(path)
+    frames = []
+    
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # Convert color format
+        frame = Image.fromarray(frame)
+        frame = transform(frame)  # Apply transformation  # Convert to tensor
+        frames.append(frame)
+    
+    cap.release()
+    return torch.stack(frames)
 
 # build base dataset
 class Base_Dataset(Dataset.Dataset):
     def collate_fn(self, batch):
-        tgt_batch,src_length_batch,name_batch,pose_tmp,gloss_batch = [],[],[],[],[]
+        tgt_batch,src_length_batch,name_batch,pose_tmp,gloss_batch, frames_batch = [],[],[],[],[],[]
         
-        for name_sample, pose_sample, text, gloss, _ in batch:
+        for name_sample, pose_sample, text, gloss, frames in batch:
             name_batch.append(name_sample)
             pose_tmp.append(pose_sample)
             tgt_batch.append(text)
             gloss_batch.append(gloss)
+            frames_batch.append(frames)
+            
 
         src_input = {}
 
         keys = pose_tmp[0].keys()
+        max_len = -1
         for key in keys:
             max_len = max([len(vid[key]) for vid in pose_tmp])
             video_length = torch.LongTensor([len(vid[key]) for vid in pose_tmp])
@@ -380,120 +397,27 @@ class Base_Dataset(Dataset.Dataset):
 
                 src_input['name_batch'] = name_batch
                 src_input['src_length_batch'] = src_length_batch
-                
+        
         if self.rgb_support:
-            support_rgb_dicts = {key:[] for key in batch[0][-1].keys()}
-            for _, _, _, _, support_rgb_dict in batch:
-                for key in support_rgb_dict.keys():
-                    support_rgb_dicts[key].append(support_rgb_dict[key])
-            
-            for part in ['left', 'right']:
-                index_key = f'{part}_sampled_indices'
-                skeletons_key = f'{part}_skeletons_norm'
-                rgb_key = f'{part}_hands'
-                len_key = f'{part}_rgb_len'
-
-                index_batch = torch.cat(support_rgb_dicts[index_key], 0)
-                skeletons_batch = torch.cat(support_rgb_dicts[skeletons_key], 0)
-                img_batch = torch.cat(support_rgb_dicts[rgb_key], 0)
-                
-                src_input[index_key] = index_batch
-                src_input[skeletons_key] = skeletons_batch
-                src_input[rgb_key] = img_batch
-                src_input[len_key] = [len(index) for index in support_rgb_dicts[index_key]]
-
+            padded_video = []
+            for frames in frames_batch:
+                T, C, H, W = frames.shape
+                pad_len = max_len - T
+                if pad_len > 0:
+                    # Repeat last frame
+                    pad = frames[-1].unsqueeze(0).expand(pad_len, C, H, W)
+                    padded = torch.cat([frames, pad], dim=0)
+                else:
+                    padded = frames[:max_len]  # Optional: trim if too long
+                padded_video.append(padded)
+            img_batch = torch.stack(padded_video,0)
+            src_input['frames'] = img_batch
         tgt_input = {}
         tgt_input['gt_sentence'] = tgt_batch
         tgt_input['gt_gloss'] = gloss_batch
 
         return src_input, tgt_input
 
-
-class S2T_Dataset(Base_Dataset):
-    def __init__(self, path, args, phase):
-        super(S2T_Dataset, self).__init__()
-        self.args = args
-        self.rgb_support = self.args.rgb_support
-        self.max_length = args.max_length
-        self.raw_data = utils.load_dataset_file(path)
-        self.phase = phase
-
-        if self.args.dataset == "CSL_Daily":
-            self.pose_dir = pose_dirs[args.dataset]
-            self.rgb_dir = rgb_dirs[args.dataset]
-            
-        elif "WLASL" in self.args.dataset:
-            self.pose_dir = os.path.join(pose_dirs[args.dataset], phase)
-            self.rgb_dir = os.path.join(rgb_dirs[args.dataset], phase)
-
-        else:
-            raise NotImplementedError
-
-        self.list = list(self.raw_data.keys())
-
-        self.data_transform = transforms.Compose([
-                                    transforms.ToTensor(),
-                                    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]), 
-                                    ])
-
-    def __len__(self):
-        return len(self.list)
-    
-    def __getitem__(self, index):
-        key = self.list[index]
-        sample = self.raw_data[key]
-
-        text = sample['text']
-        if "gloss" in sample.keys():
-            gloss = " ".join(sample['gloss'])
-        else:
-            gloss = ''
-        
-        name_sample = sample['name']
-        pose_sample, support_rgb_dict = self.load_pose(sample['video_path'])
-
-        return name_sample,pose_sample,text, gloss, support_rgb_dict
-    
-    def load_pose(self, path):
-        pose = pickle.load(open(os.path.join(self.pose_dir, path.replace(".mp4", '.pkl')), 'rb'))
-            
-        if 'start' in pose.keys():
-            assert pose['start'] < pose['end']
-            duration = pose['end'] - pose['start']
-            start = pose['start']
-        else:
-            duration = len(pose['scores'])
-            start = 0
-                
-        if duration > self.max_length:
-            tmp = sorted(random.sample(range(duration), k=self.max_length))
-        else:
-            tmp = list(range(duration))
-        
-        tmp = np.array(tmp) + start
-            
-        skeletons = pose['keypoints']
-        confs = pose['scores']
-        skeletons_tmp = []
-        confs_tmp = []
-        for index in tmp:
-            skeletons_tmp.append(skeletons[index])
-            confs_tmp.append(confs[index])
-
-        skeletons = skeletons_tmp
-        confs = confs_tmp
-    
-        kps_with_scores = load_part_kp(skeletons, confs, force_ok=True)
-
-        support_rgb_dict = {}
-        if self.rgb_support:
-            full_path = os.path.join(self.rgb_dir, path)
-            support_rgb_dict = load_support_rgb_dict(tmp, skeletons, confs, full_path, self.data_transform)
-            
-        return kps_with_scores, support_rgb_dict
-
-    def __str__(self):
-        return f'#total {len(self)}'
 
 class S2T_Dataset_news(Base_Dataset):
     def __init__(self, path, args, phase):
@@ -504,44 +428,48 @@ class S2T_Dataset_news(Base_Dataset):
         self.max_length = args.max_length
 
         path = pathlib.Path(path)
+        print('dataset path::: ')
+        print(path)
         print(self.max_length)
 
         with path.open(encoding='utf-8') as f:
             self.annotation = json.load(f)
-        if self.args.dataset == "CSL_News":
+        if self.args.dataset == "CSL_News" :
             self.pose_dir = pose_dirs[args.dataset]
             self.rgb_dir = rgb_dirs[args.dataset]
         else:
             raise NotImplementedError
         sum_sample = len(self.annotation)
+        print('dataset length:: ', sum_sample)
+        self.new_size = 128
         self.data_transform = transforms.Compose([
+                                    transforms.Resize((self.new_size, self.new_size)),
                                     transforms.ToTensor(),
                                     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]), 
                                     ])
 
-        if phase == 'train':
-            self.start_idx = int(sum_sample * 0.0)
-            self.end_idx = int(sum_sample * 0.99)
-        else:
-            self.start_idx = int(sum_sample * 0.99)
-            self.end_idx = int(sum_sample)
+        # if phase == 'train':
+        #     self.start_idx = int(sum_sample * 0.0)
+        #     self.end_idx = int(sum_sample * 0.99)
+        # else:
+        #     self.start_idx = int(sum_sample * 0.99)
+        #     self.end_idx = int(sum_sample)
         
     def __len__(self):
-        return self.end_idx - self.start_idx
+        return len(self.annotation)
     
     def __getitem__(self, index):
         num_retries = 10  
 
         # skip some invalid video sample
         for _ in range(num_retries):
-            sample = self.annotation[self.start_idx:self.end_idx][index]
+            sample = self.annotation[index]
 
             text = sample['text']
             name_sample = sample['video']
            
             try:
                 pose_sample, support_rgb_dict = self.load_pose(sample['pose'], sample['video'])
-    
             except:
                 import traceback
 
@@ -565,6 +493,7 @@ class S2T_Dataset_news(Base_Dataset):
         duration = len(pose['scores'])
 
         if duration > self.max_length:
+            print('Insisde this')
             tmp = sorted(random.sample(range(duration), k=self.max_length))
         else:
             tmp = list(range(duration))
@@ -593,7 +522,7 @@ class S2T_Dataset_news(Base_Dataset):
         
         support_rgb_dict = {}
         if self.rgb_support:
-            support_rgb_dict = load_support_rgb_dict(tmp, skeletons, confs, full_path, self.data_transform)
+            support_rgb_dict = load_video_support_rgb(full_path, self.data_transform)
 
         return kps_with_scores, support_rgb_dict
 

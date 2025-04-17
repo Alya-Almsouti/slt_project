@@ -23,15 +23,13 @@ from config import *
 from typing import Iterable, Optional
 
 def main(args):
-    # print(f"Memory allocated0: {torch.cuda.memory_allocated() / 1e9} GB")
-    # print(f"Max memory allocated: {torch.cuda.max_memory_allocated() / 1e9} GB")
     utils.init_distributed_mode_ds(args)
 
     utils.set_seed(args.seed)
 
     # wandb.init(
     #     project="Uni-Sign",
-    #     name=args.run_name if hasattr(args, 'run_name') else 'FullClips',
+    #     name=args.run_name if hasattr(args, 'run_name') else 'Uni-Sign-15ksubset - stage 2',
     #     config=vars(args)
     # )
     print(f"1Memory allocated: {torch.cuda.memory_allocated() / 1e9} GB")
@@ -39,30 +37,28 @@ def main(args):
     print(f"Creating dataset:")
     train_data = S2T_Dataset_news(path=train_label_paths[args.dataset], 
                                   args=args, phase='train')
-    print(train_data)
+    print('Training data Length: ', len(train_data))
     train_sampler = torch.utils.data.distributed.DistributedSampler(train_data,shuffle=True)
     train_dataloader = DataLoader(train_data,
-                                 batch_size=1, 
-                                 num_workers=2, 
+                                 batch_size=args.batch_size, 
+                                 num_workers=args.num_workers, 
                                  collate_fn=train_data.collate_fn,
                                  sampler=train_sampler, 
                                  pin_memory=args.pin_mem,
                                  drop_last=True)
     print(f"2Memory allocated: {torch.cuda.memory_allocated() / 1e9} GB")
-    print(f"Max memory allocated: {torch.cuda.max_memory_allocated() / 1e9} GB")
     dev_data = S2T_Dataset_news(path=dev_label_paths[args.dataset], 
                                 args=args, phase='dev')
-    print(dev_data)
+    print('Dev Data Length: ', len(dev_data))
     dev_sampler = torch.utils.data.distributed.DistributedSampler(dev_data,shuffle=False)
     dev_dataloader = DataLoader(dev_data,
-                                 batch_size=1,
-                                 num_workers=2, 
+                                 batch_size=args.batch_size,
+                                 num_workers=args.num_workers, 
                                  collate_fn=dev_data.collate_fn,
                                  sampler=dev_sampler, 
                                  pin_memory=args.pin_mem)
 
     print(f"3Memory allocated: {torch.cuda.memory_allocated() / 1e9} GB")
-    print(f"Max memory allocated: {torch.cuda.max_memory_allocated() / 1e9} GB")
     print(f"Creating model:")
     model = Uni_Sign(
                     args=args,
@@ -71,7 +67,6 @@ def main(args):
     model.cuda()
     model.train()
     print(f"4Memory allocated: {torch.cuda.memory_allocated() / 1e9} GB")
-    print(f"Max memory allocated: {torch.cuda.max_memory_allocated() / 1e9} GB")
     # Watch model with wandb
     # wandb.watch(model, log="all", log_freq=100)
 
@@ -92,7 +87,6 @@ def main(args):
 
     model_without_ddp = model
     if args.distributed:
-        print('HERERER??')
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module
@@ -144,12 +138,8 @@ def main(args):
         test_stats = evaluate(args, dev_dataloader, model, model_without_ddp)
         print(f"BLEU-4 of the network on the {len(dev_dataloader)} dev videos: {test_stats['bleu4']:.2f}")
 
-        # wandb.log({
-        #     "epoch": epoch,
-        #     "BLEU-4": test_stats["bleu4"],
-        #     "ROUGE": test_stats.get("rouge", 0),
-        #     "Validation Loss": test_stats['loss']
-        # })
+        
+        
 
         if max_accuracy < test_stats["bleu4"]:
             max_accuracy = test_stats["bleu4"]

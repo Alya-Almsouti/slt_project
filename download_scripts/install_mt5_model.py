@@ -1,7 +1,7 @@
 from transformers import MT5ForConditionalGeneration, MT5Tokenizer
 import os
 
-save_directory = "pretrained_weight/mt5-base"
+save_directory = "models/pretrained_weight/mt5-base"
 os.makedirs(save_directory, exist_ok=True)
 
 # Load and save the model

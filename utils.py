@@ -490,7 +490,7 @@ def get_args_parser():
                         help='path where to save, empty for no saving')
     parser.add_argument('--seed', default=42, type=int)
     parser.add_argument('--eval', action='store_true', help='Perform evaluation only')
-    parser.add_argument('--num_workers', default=8, type=int)
+    parser.add_argument('--num_workers', default=0, type=int)
     parser.add_argument('--pin-mem', action='store_true',
                         help='Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.')
     parser.add_argument('--no-pin-mem', action='store_false', dest='pin_mem',
@@ -535,5 +535,6 @@ def get_args_parser():
     
     # select label smooth
     parser.add_argument("--label_smoothing", default=0.2, type=float)
+    parser.add_argument("--vid_extractor", default=None, choices=['ResNet','EfficientNetV2','vit','squeezenet', 'mobilenet'])
     
     return parser

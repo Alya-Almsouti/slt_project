@@ -3,7 +3,7 @@ from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader
 from models import Uni_Sign
 import utils as utils
-from datasets import S2T_Dataset
+from datasets import S2T_Dataset, S2T_Dataset_news
 import os
 import time
 import argparse, json, datetime
@@ -15,17 +15,17 @@ from models import get_requires_grad_dict
 from SLRT_metrics import translation_performance, islr_performance, wer_list
 from transformers import get_scheduler
 from config import *
-
+import wandb
 def main(args):
     utils.init_distributed_mode_ds(args)
 
     print(args)
     utils.set_seed(args.seed)
-
+    
     print(f"Creating dataset:")
         
-    train_data = S2T_Dataset(path=train_label_paths[args.dataset], 
-                             args=args, phase='train')
+    train_data = S2T_Dataset_news(path=train_label_paths[args.dataset], 
+                                  args=args, phase='train')
     print(train_data)
     train_sampler = torch.utils.data.distributed.DistributedSampler(train_data,shuffle=True)
     train_dataloader = DataLoader(train_data,
@@ -36,8 +36,8 @@ def main(args):
                                  pin_memory=args.pin_mem,
                                  drop_last=True)
     
-    dev_data = S2T_Dataset(path=dev_label_paths[args.dataset], 
-                           args=args, phase='dev')
+    dev_data = S2T_Dataset_news(path=dev_label_paths[args.dataset], 
+                                args=args, phase='dev')
     print(dev_data)
     # dev_sampler = torch.utils.data.distributed.DistributedSampler(dev_data,shuffle=False)
     dev_sampler = torch.utils.data.SequentialSampler(dev_data)
@@ -48,8 +48,7 @@ def main(args):
                                 sampler=dev_sampler, 
                                 pin_memory=args.pin_mem)
         
-    test_data = S2T_Dataset(path=test_label_paths[args.dataset], 
-                            args=args, phase='test')
+    test_data = dev_data
     print(test_data)
     # test_sampler = torch.utils.data.distributed.DistributedSampler(test_data,shuffle=False)
     test_sampler = torch.utils.data.SequentialSampler(test_data)
@@ -117,6 +116,12 @@ def main(args):
             evaluate(args, test_dataloader, model, model_without_ddp, phase='test')
 
         return 
+    if utils.is_main_process():
+        wandb.init(
+            project="Uni-Sign",
+            name=args.run_name if hasattr(args, 'run_name') else 'Uni-Sign-15ksubset - stage 3',
+            config=vars(args)
+        )
     print(f"Start training for {args.epochs} epochs")
 
     for epoch in range(0, args.epochs):
@@ -180,6 +185,11 @@ def main(args):
                         **{f'test_{k}': v for k, v in test_stats.items()},
                         'epoch': epoch,
                         'n_parameters': n_parameters}
+            wandb.log({
+                "epoch": epoch,
+                **{f"train/{k}": v for k, v in train_stats.items()},
+                **{f"val/{k}": v for k, v in test_stats.items()},
+            })
             
         if args.output_dir and utils.is_main_process():
             with (output_dir / "log.txt").open("a") as f:
@@ -188,6 +198,7 @@ def main(args):
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
+    wandb.finish()
 
 def train_one_epoch(args, model, data_loader, optimizer, epoch):
     model.train()

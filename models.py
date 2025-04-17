@@ -12,6 +12,7 @@ from transformers import MT5ForConditionalGeneration, T5Tokenizer
 import warnings
 from config import mt5_path
 from pytorch_i3d.pytorch_i3d import InceptionI3d
+from vid_extractors import ResNetFeatureExtractor, EfficientNetV2FeatureExtractor, ViTFeatureExtractor, MobileNetV3FeatureExtractor
 
 def _no_grad_trunc_normal_(tensor, mean, std, a, b):
     # Cut & paste from PyTorch official master until it's in a few official releases - RW
@@ -68,6 +69,8 @@ def trunc_normal_(tensor, mean=0., std=1., a=-2., b=2.):
         >>> nn.init.trunc_normal_(w)
     """
     return _no_grad_trunc_normal_(tensor, mean, std, a, b)
+
+
 
 
 class Base_Model(nn.Module):
@@ -191,63 +194,41 @@ class Uni_Sign(nn.Module):
             self.graph[mode] = Graph(layout=f'{mode}', strategy='distance', max_hop=1)
             A.append(torch.tensor(self.graph[mode].A, dtype=torch.float32, requires_grad=False))
             self.proj_linear[mode] = nn.Linear(3, 64)
-        print('memorykill2')
         self.gcn_modules = nn.ModuleDict()
         self.fusion_gcn_modules = nn.ModuleDict()
         spatial_kernel_size = A[0].size(0)
-        print('memorykill3')
         for index, mode in enumerate(self.modes):
             self.gcn_modules[mode], final_dim = get_stgcn_chain(64, 'spatial', (1, spatial_kernel_size), A[index].clone(), True)
             self.fusion_gcn_modules[mode], _ = get_stgcn_chain(final_dim, 'temporal', (5, spatial_kernel_size), A[index].clone(), True)
-        print('memorykill4')
+
         self.gcn_modules['left'] = self.gcn_modules['right']
         self.fusion_gcn_modules['left'] = self.fusion_gcn_modules['right']
         self.proj_linear['left'] = self.proj_linear['right']
-        print('memorykill5')
+
         self.part_para = nn.Parameter(torch.zeros(hidden_dim*len(self.modes)))
         self.pose_proj = nn.Linear(256*4, 768)
         
-        self.apply(self._init_weights)
-        print('memorykill6')
-        if "CSL" in self.args.dataset:
-            self.lang = 'Chinese'
-        else:
-            self.lang = 'English'
-        
+    
         if self.args.rgb_support:
-            self.rgb_support_backbone = torch.nn.Sequential(*list(torchvision.models.efficientnet_b0(pretrained=True).children())[:-2])
-            self.rgb_proj = nn.Conv2d(1280, hidden_dim, kernel_size=1)
+            vid_extractor = self.args.vid_extractor
+            if vid_extractor == 'resent':
+                self.feature_extractor = ResNetFeatureExtractor()
+            elif vid_extractor == 'EfficientNetV2':
+                self.feature_extractor = EfficientNetV2FeatureExtractor()
+            elif vid_extractor == 'vit': 
+                self.feature_extractor = ViTFeatureExtractor()
+            elif vid_extractor == 'mobilenet':
+                self.feature_extractor = MobileNetV3FeatureExtractor()
+            # elif vid_extractor == 'squeezenet':
+            #     continue
+            # elif vid_extractor == 'i3d':
+            #     continue
 
-            self.fusion_pose_rgb_linear = nn.Linear(hidden_dim, hidden_dim)
-            
-            # PGF
-            self.fusion_pose_rgb_DA = DeformableAttention2D(
-                                        dim = hidden_dim,            # feature dimensions
-                                        dim_head = 32,               # dimension per head
-                                        heads = 8,                   # attention heads
-                                        dropout = 0.,                # dropout
-                                        downsample_factor = 1,       # downsample factor (r in paper)
-                                        offset_scale = None,         # scale of offset, maximum offset
-                                        offset_groups = None,        # number of offset groups, should be multiple of heads
-                                        offset_kernel_size = 1,      # offset kernel size
-                                    )
-            
-            self.fusion_gate = nn.Sequential(nn.Conv1d(hidden_dim*2, hidden_dim, 1),
-                                        nn.GELU(),
-                                        nn.Conv1d(hidden_dim, 1, 1),
-                                        nn.Tanh(),
-                                        nn.ReLU(),
-                                    )
-            
-            for layer in self.fusion_gate:
-                if isinstance(layer, nn.Conv1d):
-                    nn.init.constant_(layer.weight, 0)
-                    nn.init.constant_(layer.bias, 0)
-        print('memorykill7')
-        print(f"Memory allocated: {torch.cuda.memory_allocated() / 1e9} GB")
+            self.fusion_layer=nn.Linear(2*768, 768)
+        self.apply(self._init_weights)
+
         self.mt5_model = MT5ForConditionalGeneration.from_pretrained(mt5_path)
-        print(f"Memory allocated: {torch.cuda.memory_allocated() / 1e9} GB")
-        print('memorykill8')
+
         self.mt5_tokenizer = T5Tokenizer.from_pretrained(mt5_path, legacy=False)
     
         
@@ -327,16 +308,11 @@ class Uni_Sign(nn.Module):
         , 'gt_gloss' list
         ])
         """
-        print(src_input['body'].shape)
+        # print(src_input['body'].shape) somtimes 1, 123, 9, 3 and sometimes 1, 256, 9, 3
         # print('in forward')
         # RGB branch forward
         if self.args.rgb_support:
-            rgb_support_dict = {}
-            for index_key, rgb_key in zip(['left_sampled_indices', 'right_sampled_indices'], ['left_hands', 'right_hands']):
-                rgb_feat = self.rgb_support_backbone(src_input[rgb_key])
-                
-                rgb_support_dict[index_key] = src_input[index_key]
-                rgb_support_dict[rgb_key] = rgb_feat
+            frames = src_input['frames']
         
         # Pose branch forward
         features = []
@@ -354,26 +330,10 @@ class Uni_Sign(nn.Module):
                 assert not body_feat is None
                 if part == 'left':
                     # Pose RGB fusion
-                    if self.args.rgb_support:
-                        gcn_feat = self.gather_feat_pose_rgb(gcn_feat, 
-                                                            rgb_support_dict[f'{part}_hands'], 
-                                                            rgb_support_dict[f'{part}_sampled_indices'], 
-                                                            src_input[f'{part}_rgb_len'],
-                                                            src_input[f'{part}_skeletons_norm'],
-                                                            )
-                        
                     gcn_feat = gcn_feat + body_feat[..., -2][...,None].detach()
                     
                 elif part == 'right':
                     # Pose RGB fusion
-                    if self.args.rgb_support:
-                        gcn_feat = self.gather_feat_pose_rgb(gcn_feat, 
-                                                                rgb_support_dict[f'{part}_hands'], 
-                                                                rgb_support_dict[f'{part}_sampled_indices'],
-                                                                src_input[f'{part}_rgb_len'],
-                                                                src_input[f'{part}_skeletons_norm'],
-                                                                )
-                        
                     gcn_feat = gcn_feat + body_feat[..., -1][...,None].detach()
 
                 elif part == 'face_all':
@@ -392,6 +352,14 @@ class Uni_Sign(nn.Module):
         # concat sub-pose feature across token dimension
         inputs_embeds = torch.cat(features, dim=-1) + self.part_para
         inputs_embeds = self.pose_proj(inputs_embeds) #(1, 225, 768)
+
+        if self.args.rgb_support:
+            frames_embed = self.feature_extractor(frames)
+            # print('frames_embed ', frames_embed.shape)
+            # print('inputs_embeds ', inputs_embeds.shape)
+            
+            inputs_embeds = self.fusion_layer(torch.cat([inputs_embeds, frames_embed], dim=-1))
+            # print('inputs_embeds ', inputs_embeds.shape)
 
         prefix_token = self.mt5_tokenizer(
                                 [f"Translate sign language video to English: "] * len(tgt_input["gt_sentence"]),
@@ -432,7 +400,8 @@ class Uni_Sign(nn.Module):
         #     )
         label = labels.reshape(-1)
         out_logits = out['logits'] # tensor (1, 28, 250112) second dimension is changing
-        print(out_logits.shape)
+
+        # print(out_logits.shape)
         logits = out_logits.reshape(-1,out_logits.shape[-1]) # nans
 
         loss_fct = torch.nn.CrossEntropyLoss(label_smoothing=self.args.label_smoothing, ignore_index=-100)

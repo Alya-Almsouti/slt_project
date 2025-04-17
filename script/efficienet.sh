@@ -1,4 +1,4 @@
-output_dir=out/resnet
+output_dir=out/EfficientNetV2
 
 deepspeed --include localhost:0 --master_port 29511 pre_training.py \
    --batch-size 2 \
@@ -10,4 +10,4 @@ deepspeed --include localhost:0 --master_port 29511 pre_training.py \
    --output_dir $output_dir \
    --dataset CSL_News \
    --rgb_support \
-   --vid_extractor  
+   --vid_extractor EfficientNetV2
