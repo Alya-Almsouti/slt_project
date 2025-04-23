@@ -535,6 +535,9 @@ def get_args_parser():
     
     # select label smooth
     parser.add_argument("--label_smoothing", default=0.2, type=float)
-    parser.add_argument("--vid_extractor", default=None, choices=['ResNet','EfficientNetV2','vit','squeezenet', 'mobilenet'])
+    parser.add_argument("--vid_extractor", default=None, choices=['resnet','EfficientNetV2','vit','squeezenet', 'mobilenet', 'i3d'])
+    parser.add_argument("--freeze_vision_encoder", action='store_true')
+    parser.add_argument("--skeleton_support", action='store_true')
+    parser.add_argument("--skeleton_extractor", default=None,choices=['unisign'])
     
     return parser

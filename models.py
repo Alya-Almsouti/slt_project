@@ -6,14 +6,12 @@ import contextlib
 import torchvision
 from einops import rearrange
 import math
-from stgcn_layers import Graph, get_stgcn_chain
-from deformable_attention_2d import DeformableAttention2D
 from transformers import MT5ForConditionalGeneration, T5Tokenizer 
 import warnings
 from config import mt5_path
 from pytorch_i3d.pytorch_i3d import InceptionI3d
-from vid_extractors import ResNetFeatureExtractor, EfficientNetV2FeatureExtractor, ViTFeatureExtractor, MobileNetV3FeatureExtractor
-
+from vid_extractors import ResNetFeatureExtractor, EfficientNetV2FeatureExtractor, ViTFeatureExtractor, MobileNetV3FeatureExtractor, i3d
+from keypoints_extractor import UniSignGNNSkeletonExtractor
 def _no_grad_trunc_normal_(tensor, mean, std, a, b):
     # Cut & paste from PyTorch official master until it's in a few official releases - RW
     # Method based on https://people.sc.fsu.edu/~jburkardt/presentations/truncated_normal.pdf
@@ -71,160 +69,57 @@ def trunc_normal_(tensor, mean=0., std=1., a=-2., b=2.):
     return _no_grad_trunc_normal_(tensor, mean, std, a, b)
 
 
+class AttentionPooling(nn.Module):
+    def __init__(self, input_dim=1536, num_output_tokens=50, num_heads=8):
+        super().__init__()
+        self.num_output_tokens = num_output_tokens
+        self.input_dim = input_dim
 
+        # Learnable query tokens
+        self.query_tokens = nn.Parameter(torch.randn(num_output_tokens, input_dim))
 
-class Base_Model(nn.Module):
-    def __init__(self, args):
-        super(Base_Model, self).__init__()
-        self.args = args
-        self.lang = 'English'
+        # Multi-head attention: queries = learned tokens, keys/values = input sequence
+        self.attn = nn.MultiheadAttention(embed_dim=input_dim, num_heads=num_heads, batch_first=True)
 
-        self.video_proj = nn.Linear(1024, 768)
-        self.apply(self._init_weights)
+    def forward(self, x):
+        # x shape: (batch_size, seq_len=256, input_dim=1536)
 
-        #TEncoder head
-        print('step 1')
-        self.i3d_encoder = InceptionI3d(num_classes=400, in_channels=3)
-        i3d_pretrained_path ='pytorch_i3d/models/rgb_imagenet.pt'
-        self.i3d_encoder.load_state_dict(torch.load(i3d_pretrained_path))
-        self.i3d_encoder.avg_pool = nn.Identity()
-        self.i3d_encoder.logits = nn.Identity()
-        print(f"Memory allocated: {torch.cuda.memory_allocated() / 1e9} GB")
-        # To text model
-        print('step 2')
-        self.mt5_model = MT5ForConditionalGeneration.from_pretrained(mt5_path)
-        print(f"Memory allocated: {torch.cuda.memory_allocated() / 1e9} GB")
-        self.mt5_tokenizer = T5Tokenizer.from_pretrained(mt5_path, legacy=False)
+        batch_size = x.size(0)
+        queries = self.query_tokens.unsqueeze(0).expand(batch_size, -1, -1)  # (batch, 50, 1536)
 
-        print('done loading')
-        
-    def _init_weights(self, m):
-        if isinstance(m, nn.Linear):
-            trunc_normal_(m.weight, std=.02)
-            if isinstance(m, nn.Linear) and m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
+        # Q: learned tokens, K/V: the full sequence
+        output, _ = self.attn(query=queries, key=x, value=x)
 
-    @torch.no_grad()
-    def generate(self,pre_compute_item,max_new_tokens,num_beams):
-        inputs_embeds = pre_compute_item['inputs_embeds']
-        attention_mask = pre_compute_item['attention_mask']
-    
-        out = self.mt5_model.generate(inputs_embeds = inputs_embeds,
-                                attention_mask = attention_mask,
-                                max_new_tokens=max_new_tokens,
-                                num_beams = num_beams,
-                            )
+        # output shape: (batch_size, 50, 1536)
+        return output
 
-        return out
-
-    
-    def forward(self, src_input, tgt_input):
-        video = src_input['video']
-        name_batch = src_input['name_batch'] #name of each video in the batch
-        src_length_batch = src_input['src_length_batch'] #tensor of number of frames for each video
-
-        video_i3d = video.permute(0, 2, 1, 3, 4) # From (B, T, 3, 128, 128) -> (B, 3, T, 128, 128)
-        features = self.i3d_encoder(video_i3d) # The output shape might be (B, feature_dim, T_i3d, H_i3d, W_i3d)b, 1024,32, 7, 7 
-        features = features.mean(dim=[-2, -1])  # Now (B, feature_dim, T_i3d)
-        features = features.transpose(1, 2)
-        T_new = features.shape[1]  # New temporal dimension from I3D
-        # Project features to 768 dimensions.
-        video_embeds = self.video_proj(features)
-        B = video_embeds.shape[0]
-        prefix_token = self.mt5_tokenizer(
-            ["Translate sign language video to English: "] * B,
-            padding="longest",
-            truncation=True,
-            return_tensors="pt",
-        ).to(video_embeds.device)
-        
-        prefix_embeds = self.mt5_model.encoder.embed_tokens(prefix_token['input_ids'])
-        
-        inputs_embeds = torch.cat([prefix_embeds, video_embeds], dim=1)
-        
-        # Build attention mask.
-        video_mask = torch.ones(B, video_embeds.shape[1], device=video_embeds.device, dtype=prefix_token['attention_mask'].dtype)
-        attention_mask = torch.cat([prefix_token['attention_mask'], video_mask], dim=1)
-        
-        # Prepare the target tokens.
-        tgt_input_tokenizer = self.mt5_tokenizer(
-            tgt_input['gt_sentence'], 
-            return_tensors="pt", 
-            padding=True,
-            truncation=True,
-            max_length=50
-        )
-        labels = tgt_input_tokenizer['input_ids']
-        labels[labels == self.mt5_tokenizer.pad_token_id] = -100
-        
-        # Forward pass through MT5.
-        out = self.mt5_model(
-            inputs_embeds=inputs_embeds,
-            attention_mask=attention_mask,
-            labels=labels.to(video_embeds.device),
-            return_dict=True
-        )
-        
-        loss = out.loss
-        
-        
-        return {
-            'inputs_embeds': inputs_embeds,
-            'attention_mask': attention_mask,
-            'loss': loss,
-            'logits': out.logits,
-        }
 
 class Uni_Sign(nn.Module):
     def __init__(self, args):
         super(Uni_Sign, self).__init__()
         self.args = args
         
-        self.modes = ['body', 'left', 'right', 'face_all']
-        
-        self.graph, A = {}, []
-        # project (x,y,score) to hidden dim
-        hidden_dim = args.hidden_dim
-        self.proj_linear = nn.ModuleDict()
-        print('1')
-        for mode in self.modes:
-            self.graph[mode] = Graph(layout=f'{mode}', strategy='distance', max_hop=1)
-            A.append(torch.tensor(self.graph[mode].A, dtype=torch.float32, requires_grad=False))
-            self.proj_linear[mode] = nn.Linear(3, 64)
-        self.gcn_modules = nn.ModuleDict()
-        self.fusion_gcn_modules = nn.ModuleDict()
-        spatial_kernel_size = A[0].size(0)
-        for index, mode in enumerate(self.modes):
-            self.gcn_modules[mode], final_dim = get_stgcn_chain(64, 'spatial', (1, spatial_kernel_size), A[index].clone(), True)
-            self.fusion_gcn_modules[mode], _ = get_stgcn_chain(final_dim, 'temporal', (5, spatial_kernel_size), A[index].clone(), True)
+        if self.args.skeleton_support:
 
-        self.gcn_modules['left'] = self.gcn_modules['right']
-        self.fusion_gcn_modules['left'] = self.fusion_gcn_modules['right']
-        self.proj_linear['left'] = self.proj_linear['right']
-
-        self.part_para = nn.Parameter(torch.zeros(hidden_dim*len(self.modes)))
-        self.pose_proj = nn.Linear(256*4, 768)
-        
+            skeleton_extractor = self.args.skeleton_extractor
+            if skeleton_extractor == 'unisign':
+                self.skeleton_extractor = UniSignGNNSkeletonExtractor(args)
     
         if self.args.rgb_support:
             vid_extractor = self.args.vid_extractor
-            if vid_extractor == 'resent':
-                self.feature_extractor = ResNetFeatureExtractor()
+            freeze = True if self.args.freeze_vision_encoder else False
+            if vid_extractor == 'resnet':
+                self.feature_extractor = ResNetFeatureExtractor(freeze_vision_encoder=freeze)
             elif vid_extractor == 'EfficientNetV2':
-                self.feature_extractor = EfficientNetV2FeatureExtractor()
+                self.feature_extractor = EfficientNetV2FeatureExtractor(freeze_vision_encoder=freeze)
             elif vid_extractor == 'vit': 
-                self.feature_extractor = ViTFeatureExtractor()
+                self.feature_extractor = ViTFeatureExtractor(freeze_vision_encoder=freeze)
             elif vid_extractor == 'mobilenet':
-                self.feature_extractor = MobileNetV3FeatureExtractor()
-            # elif vid_extractor == 'squeezenet':
-            #     continue
-            # elif vid_extractor == 'i3d':
-            #     continue
-
+                self.feature_extractor = MobileNetV3FeatureExtractor(freeze_vision_encoder=freeze)
+            elif vid_extractor == 'i3d':
+                self.feature_extractor = i3d(freeze_vision_encoder=freeze)
             self.fusion_layer=nn.Linear(2*768, 768)
+
         self.apply(self._init_weights)
 
         self.mt5_model = MT5ForConditionalGeneration.from_pretrained(mt5_path)
@@ -252,49 +147,6 @@ class Uni_Sign(nn.Module):
         else:
             return contextlib.nullcontext()
 
-    def gather_feat_pose_rgb(self, gcn_feat, rgb_feat, indices, rgb_len, pose_init):
-        b, c, T, n = gcn_feat.shape
-        assert rgb_feat.shape[0] == indices.shape[0]
-        rgb_feat = self.rgb_proj(rgb_feat)
-        
-        assert len(rgb_len) == b
-        start = 0
-        for batch in range(b):
-            index = indices[start:start + rgb_len[batch]].to(torch.long)
-            # ignore some invalid rgb clip
-            if rgb_len[batch] == 1 and -1 in index:
-                start = start + rgb_len[batch]
-                continue
-            
-            # index selection
-            gcn_feat_selected = gcn_feat[batch, :, index]
-            rgb_feat_selected = rgb_feat[start:start + rgb_len[batch]]
-            pose_init_selected = pose_init[start:start + rgb_len[batch]]
-            
-            gcn_feat_selected = rearrange(gcn_feat_selected, 'c t n -> t c n')
-            pose_init_selected = rearrange(pose_init_selected, 't n c -> t c n')
-            
-            # PGF forward
-            with self.maybe_autocast():
-                fused_transposed = self.fusion_pose_rgb_DA(pose_feat=gcn_feat_selected,
-                                                            rgb_feat=rgb_feat_selected, 
-                                                            pose_init=pose_init_selected, )
-            
-            fused_transposed = fused_transposed.to(gcn_feat.dtype)
-            gate_feature = torch.concat([fused_transposed, gcn_feat_selected,], dim=-2)
-            gate_score = self.fusion_gate(gate_feature)
-            fused_transposed_post = (gate_score) * fused_transposed + (1 - gate_score) * gcn_feat_selected
-            
-            gcn_feat = gcn_feat.clone() 
-            fused_transposed_post = rearrange(fused_transposed_post, 't c n -> c t n')
-            
-            # replace gcn feature
-            gcn_feat[batch, :, index] = fused_transposed_post
-            start = start + rgb_len[batch]
-            
-        assert start == rgb_feat.shape[0]
-        return gcn_feat
-
     def forward(self, src_input, tgt_input):
         """ src_input : dict dict_keys([
         'body' tensor(1, 255, 9, 3) #second dimension is different between
@@ -308,58 +160,21 @@ class Uni_Sign(nn.Module):
         , 'gt_gloss' list
         ])
         """
-        # print(src_input['body'].shape) somtimes 1, 123, 9, 3 and sometimes 1, 256, 9, 3
-        # print('in forward')
-        # RGB branch forward
-        if self.args.rgb_support:
-            frames = src_input['frames']
         
-        # Pose branch forward
-        features = []
-
-        body_feat = None
-        for part in self.modes:
-            # project position to hidden dim
-            proj_feat = self.proj_linear[part](src_input[part]).permute(0,3,1,2) #B,C,T,V
-            # spatial gcn forward
-            gcn_feat = self.gcn_modules[part](proj_feat)
-            if part == 'body':
-                body_feat = gcn_feat
-
-            else:
-                assert not body_feat is None
-                if part == 'left':
-                    # Pose RGB fusion
-                    gcn_feat = gcn_feat + body_feat[..., -2][...,None].detach()
-                    
-                elif part == 'right':
-                    # Pose RGB fusion
-                    gcn_feat = gcn_feat + body_feat[..., -1][...,None].detach()
-
-                elif part == 'face_all':
-                    gcn_feat = gcn_feat + body_feat[..., 0][...,None].detach()
-
-                else:
-                    raise NotImplementedError
-            
-            # temporal gcn forward
-            gcn_feat = self.fusion_gcn_modules[part](gcn_feat) #B,C,T,V
-            pool_feat = gcn_feat.mean(-1).transpose(1,2) #B,T,C
-            features.append(pool_feat)
-
-        # feature is a list of 4 tensors eah tensor is: #(1, 255, 256)
-
-        # concat sub-pose feature across token dimension
-        inputs_embeds = torch.cat(features, dim=-1) + self.part_para
-        inputs_embeds = self.pose_proj(inputs_embeds) #(1, 225, 768)
-
         if self.args.rgb_support:
-            frames_embed = self.feature_extractor(frames)
-            # print('frames_embed ', frames_embed.shape)
-            # print('inputs_embeds ', inputs_embeds.shape)
-            
-            inputs_embeds = self.fusion_layer(torch.cat([inputs_embeds, frames_embed], dim=-1))
-            # print('inputs_embeds ', inputs_embeds.shape)
+            frames_embed = self.feature_extractor(src_input['frames'])
+            inputs_embeds = frames_embed            
+
+        if self.args.skeleton_support:
+            if self.args.vid_extractor == 'i3d':
+                skeleton_embeds = self.skeleton_extractor(src_input, T_target = frames_embed.shape[1])
+            else:
+                skeleton_embeds = self.skeleton_extractor(src_input)
+            inputs_embeds = skeleton_embeds
+            # print("frames embed: ", frames_embed.shape)
+            # print("skeelton_embped: ", skeleton_embeds.shape)
+            if self.args.rgb_support:
+                inputs_embeds = self.fusion_layer(torch.cat([skeleton_embeds, frames_embed], dim=-1))
 
         prefix_token = self.mt5_tokenizer(
                                 [f"Translate sign language video to English: "] * len(tgt_input["gt_sentence"]),
@@ -372,6 +187,9 @@ class Uni_Sign(nn.Module):
 
         inputs_embeds = torch.cat([prefix_embeds, inputs_embeds], dim=1) #tensor(1, 233, 768)
 
+        if self.args.rgb_support and self.args.vid_extractor == 'i3d':
+            B = frames_embed.shape[0]
+            src_input['attention_mask'] = torch.ones(B, frames_embed.shape[1], device=frames_embed.device, dtype=prefix_token['attention_mask'].dtype)
         attention_mask = torch.cat([prefix_token['attention_mask'],
                                     src_input['attention_mask']], dim=1) #tensor(1, 233)
 
@@ -385,19 +203,12 @@ class Uni_Sign(nn.Module):
 
         labels = tgt_input_tokenizer['input_ids'] #tensor(1, 28)
         labels[labels == self.mt5_tokenizer.pad_token_id] = -100
-
         out = self.mt5_model(
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
             labels=labels.to(inputs_embeds.device),
             return_dict=True)
-        # with torch.cuda.amp.autocast(dtype=torch.float32):  # Enables safe FP16
-        #     out = self.mt5_model(
-        #         inputs_embeds=inputs_embeds,
-        #         attention_mask=attention_mask,
-        #         labels=labels.to(inputs_embeds.device),
-        #         return_dict=True
-        #     )
+
         label = labels.reshape(-1)
         out_logits = out['logits'] # tensor (1, 28, 250112) second dimension is changing
 

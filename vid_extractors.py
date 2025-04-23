@@ -3,7 +3,43 @@ import torch.nn as nn
 from torchvision.models import efficientnet_v2_s, EfficientNet_V2_S_Weights
 from torchvision.models import mobilenet_v3_small, MobileNet_V3_Small_Weights
 from torchvision.models import vit_b_16, ViT_B_16_Weights
+from torchvision.models import resnet18, ResNet18_Weights
 from torchvision import models
+from pytorch_i3d.pytorch_i3d import InceptionI3d
+from torch import Tensor
+import torch
+from torch import nn
+import torch.utils.checkpoint
+import contextlib
+import torchvision
+from einops import rearrange
+import math
+from transformers import MT5ForConditionalGeneration, T5Tokenizer 
+import warnings
+from config import mt5_path
+class i3d(nn.Module):
+    def __init__(self, output_dim=768, freeze_vision_encoder=False):
+        super().__init__()
+
+        self.video_proj = nn.Linear(1024, 768)
+        self.i3d_encoder = InceptionI3d(num_classes=400, in_channels=3)
+        i3d_pretrained_path ='pytorch_i3d/models/rgb_imagenet.pt'
+        self.i3d_encoder.load_state_dict(torch.load(i3d_pretrained_path), strict=False)
+        self.i3d_encoder.avg_pool = nn.Identity()
+        self.i3d_encoder.logits = nn.Identity()
+        if freeze_vision_encoder:
+            for param in self.i3d_encoder.parameters():
+                param.requires_grad = False
+    
+    def forward(self, x):
+        video_i3d = x.permute(0, 2, 1, 3, 4) # From (B, T, 3, 128, 128) -> (B, 3, T, 128, 128)
+        features = self.i3d_encoder(video_i3d) # The output shape might be (B, feature_dim, T_i3d, H_i3d, W_i3d)b, 1024,32, 7, 7 
+        features = features.mean(dim=[-2, -1])  # Now (B, feature_dim, T_i3d)
+        features = features.transpose(1, 2)
+        T_new = features.shape[1]  # New temporal dimension from I3D
+        # Project features to 768 dimensions.
+        video_embeds = self.video_proj(features)
+        return video_embeds
 
 class EfficientNetV2FeatureExtractor(nn.Module):
     def __init__(self, output_dim=768):
@@ -86,13 +122,17 @@ class ViTFeatureExtractor(nn.Module):
         return output
 
 class ResNetFeatureExtractor(nn.Module):
-    def __init__(self, output_dim=768):
+    def __init__(self, output_dim=768, freeze_vision_encoder = False):
         super().__init__()
         # Load a pretrained ResNet and remove the classifier
-        resnet = models.resnet18(pretrained=True)
+        resnet = resnet18(weights=ResNet18_Weights.DEFAULT)
         self.feature_dim = resnet.fc.in_features  
 
-        self.backbone = nn.Sequential(*list(resnet.children())[:-1])  # output shape: [B*T, 2048, 1, 1]
+        self.backbone = nn.Sequential(*list(resnet.children())[:-1])  # output shape: [B*T, 512, 1, 1] for ResNet18
+
+        if freeze_vision_encoder:
+            for param in self.backbone.parameters():
+                param.requires_grad = False
 
         self.projector = nn.Linear(self.feature_dim, output_dim)
 

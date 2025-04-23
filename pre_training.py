@@ -32,8 +32,6 @@ def main(args):
     #     name=args.run_name if hasattr(args, 'run_name') else 'Uni-Sign-15ksubset - stage 2',
     #     config=vars(args)
     # )
-    print(f"1Memory allocated: {torch.cuda.memory_allocated() / 1e9} GB")
-    print(f"Max memory allocated: {torch.cuda.max_memory_allocated() / 1e9} GB")
     print(f"Creating dataset:")
     train_data = S2T_Dataset_news(path=train_label_paths[args.dataset], 
                                   args=args, phase='train')
@@ -116,9 +114,9 @@ def main(args):
     max_accuracy = 0
 
     if args.eval:
-        if utils.is_main_process():
-            print("📄 test result")
-            test_stats = evaluate(args, dev_dataloader, model, model_without_ddp)
+
+        print("📄 test result")
+        test_stats = evaluate(args, dev_dataloader, model, model_without_ddp)
 
         return 
     print(f"Start training for {args.epochs} epochs")
@@ -130,7 +128,7 @@ def main(args):
         train_stats = train_one_epoch(args, model, train_dataloader, optimizer, epoch, model_without_ddp=model_without_ddp)
 
         if args.output_dir:
-            checkpoint_paths = [output_dir / f'checkpoint_{epoch}.pth']
+            checkpoint_paths = [output_dir / f'checkpoint.pth']
             for checkpoint_path in checkpoint_paths:
                 utils.save_on_master({
                     'model': get_requires_grad_dict(model_without_ddp),
@@ -156,7 +154,10 @@ def main(args):
                      'epoch': epoch,
                      'n_parameters': n_parameters}
         
-        if args.output_dir and utils.is_main_process():
+        if args.output_dir:
+            with (output_dir / "info.txt").open("a") as f:
+                for key, value in vars(args).items():
+                    f.write(f"{key}: {value}\n")
             with (output_dir / "log.txt").open("a") as f:
                 f.write(json.dumps(log_stats) + "\n")
         
@@ -272,7 +273,7 @@ def evaluate(args, data_loader, model, model_without_ddp):
     print('* BLEU-4 {top1.global_avg:.3f} loss {losses.global_avg:.3f}'
           .format(top1=metric_logger.bleu4, losses=metric_logger.loss))
     
-    if utils.is_main_process() and utils.get_world_size() == 1 and args.eval:
+    if args.eval:
         with open(args.output_dir+'/tmp_pres.txt','w') as f:
             for i in range(len(tgt_pres)):
                 f.write(tgt_pres[i]+'\n')
