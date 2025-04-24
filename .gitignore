@@ -3,6 +3,7 @@ __pycache__/**
 out/
 core*
 *.ipynb
+config.py
 # *.sh
 *.bin
 wandb

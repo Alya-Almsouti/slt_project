@@ -1,5 +1,5 @@
 mt5_path = "./pretrained_weight/mt5-base"
-name = 'alya.almsouti'
+name = 'amal.saqib'
 # label paths
 train_label_paths = {
                     "CSL_News": f"/l/users/{name}/AI702/Datasets/ClipsDataset/manifests/subset_train.json",
@@ -33,7 +33,7 @@ rgb_dirs = {
 
 # pose paths
 pose_dirs = {
-            "CSL_News": f"/l/users/{name}/AI702/Datasets/ClipsDataset/pose_format/pose_format",
+            "CSL_News": f"/l/users/{name}/AI702/Datasets/ClipsDataset/pose_format",
             "CSL_Daily": './dataset/CSL_Daily/pose_format',
             "WLASL": "./dataset/WLASL/pose_format",
             "Open_ASL": f"/l/users/{name}/AI702/Datasets/ClipsDataset/pose_format"

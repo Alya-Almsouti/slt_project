@@ -5,9 +5,10 @@ from torchvision.models import mobilenet_v3_small, MobileNet_V3_Small_Weights
 from torchvision.models import vit_b_16, ViT_B_16_Weights
 from torchvision.models import resnet18, ResNet18_Weights
 from torchvision import models
-from pytorch_i3d.pytorch_i3d import InceptionI3d
+# from pytorch_i3d.pytorch_i3d import InceptionI3d
 from torch import Tensor
 import torch
+import timm
 from torch import nn
 import torch.utils.checkpoint
 import contextlib
@@ -91,21 +92,22 @@ class MobileNetV3FeatureExtractor(nn.Module):
 
 
 class ViTFeatureExtractor(nn.Module):
-    def __init__(self, output_dim=768):
+    def __init__(self, model_name='vit_small_patch16_224', output_dim=384, freeze_vision_encoder=False):
         super().__init__()
-        # Load a pre-trained ViT model
-        weights = ViT_B_16_Weights.DEFAULT
-        self.vit = vit_b_16(weights=weights)
-        self.feature_dim = self.vit.hidden_dim  # Typically 768 for vit_b_16
+        self.vit = timm.create_model(model_name, pretrained=True)
+        self.feature_dim = self.vit.num_features
 
-        # Remove the classification head
-        self.vit.heads = nn.Identity()
+        self.vit.reset_classifier(0)  # Remove the classification head
 
-        # Optional: add a projection layer if output_dim differs from feature_dim
+        if freeze_vision_encoder:
+            for param in self.vit.parameters():
+                param.requires_grad = False
+
         if output_dim != self.feature_dim:
             self.projector = nn.Linear(self.feature_dim, output_dim)
         else:
             self.projector = nn.Identity()
+
 
     def forward(self, x):  # x shape: [B, T, 3, 160, 160]
         B, T, C, H, W = x.shape
@@ -120,6 +122,28 @@ class ViTFeatureExtractor(nn.Module):
         # Reshape back to [B, T, output_dim]
         output = projected.view(B, T, -1)
         return output
+class ConvNeXtFeatureExtractor(nn.Module):
+    def __init__(self, model_name='convnext_tiny', output_dim=768, freeze_vision_encoder=False):
+        super().__init__()
+        self.backbone = timm.create_model(model_name, pretrained=True, num_classes=0)
+        self.feature_dim = self.backbone.num_features  # e.g., 768 for tiny, 1024 for base, 1536 for large
+
+        if freeze_vision_encoder:
+            for param in self.backbone.parameters():
+                param.requires_grad = False
+
+        if output_dim != self.feature_dim:
+            self.projector = nn.Linear(self.feature_dim, output_dim)
+        else:
+            self.projector = nn.Identity()
+
+    def forward(self, x):  # x shape: [B, T, 3, H, W]
+        B, T, C, H, W = x.shape
+        x = x.view(B * T, C, H, W)
+
+        feats = self.backbone(x)  # [B*T, feature_dim]
+        projected = self.projector(feats)
+        return projected.view(B, T, -1)
 
 class ResNetFeatureExtractor(nn.Module):
     def __init__(self, output_dim=768, freeze_vision_encoder = False):
