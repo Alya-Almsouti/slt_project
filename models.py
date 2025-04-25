@@ -175,7 +175,7 @@ class Uni_Sign(nn.Module):
             # print("skeelton_embped: ", skeleton_embeds.shape)
             if self.args.rgb_support:
                 inputs_embeds = self.fusion_layer(torch.cat([skeleton_embeds, frames_embed], dim=-1))
-
+    
         prefix_token = self.mt5_tokenizer(
                                 [f"Translate sign language video to English: "] * len(tgt_input["gt_sentence"]),
                                 padding="longest",
