@@ -9,9 +9,11 @@ import math
 from transformers import MT5ForConditionalGeneration, T5Tokenizer 
 import warnings
 from config import mt5_path
-from pytorch_i3d.pytorch_i3d import InceptionI3d
-from vid_extractors import ResNetFeatureExtractor, EfficientNetV2FeatureExtractor, ViTFeatureExtractor, MobileNetV3FeatureExtractor, i3d
+# from pytorch_i3d.pytorch_i3d import InceptionI3d
+from vid_extractors import ConvNeXtFeatureExtractor, ResNetFeatureExtractor, EfficientNetV2FeatureExtractor, ViTFeatureExtractor, MobileNetV3FeatureExtractor, i3d
 from keypoints_extractor import UniSignGNNSkeletonExtractor
+import torch.nn.functional as F
+
 def _no_grad_trunc_normal_(tensor, mean, std, a, b):
     # Cut & paste from PyTorch official master until it's in a few official releases - RW
     # Method based on https://people.sc.fsu.edu/~jburkardt/presentations/truncated_normal.pdf
@@ -68,6 +70,48 @@ def trunc_normal_(tensor, mean=0., std=1., a=-2., b=2.):
     """
     return _no_grad_trunc_normal_(tensor, mean, std, a, b)
 
+def motion_filter(x, threshold=0.01, target_frames=None):
+    B, T, D = x.shape
+    diffs = (x[:, 1:] - x[:, :-1]).pow(2).mean(-1)  # [B, T-1]
+    keep = torch.cat([torch.ones(B, 1).to(x.device), (diffs > threshold).float()], dim=1)
+    keep_idx = keep.bool()
+
+    filtered = [x[b][keep_idx[b]] for b in range(B)]
+
+    # Determine target length
+    if target_frames is None:
+        max_len = max([f.shape[0] for f in filtered])
+    else:
+        max_len = target_frames
+
+    padded = []
+    for f in filtered:
+        length = f.shape[0]
+        if length < max_len:
+            pad = torch.zeros((max_len - length, f.shape[1]), device=f.device, dtype=f.dtype)
+            f = torch.cat([f, pad], dim=0)
+        elif length > max_len:
+            f = f[:max_len]  # truncate
+        padded.append(f)
+
+    return torch.stack(padded)  # [B, max_len, D]
+
+def topk_attention_select(x, k=64):
+    """
+    x: [B, T, D]
+    returns: top-k frame embeddings [B, k, D] based on attention over time
+    """
+    B, T, D = x.shape
+    k = min(k, T)  # don't try to get more frames than exist
+
+    attn_scores = x.mean(-1)  # crude attention: [B, T]
+    topk = torch.topk(attn_scores, k=k, dim=1, largest=True, sorted=True).indices  # [B, k]
+
+    # Expand to gather correct features
+    topk = topk.unsqueeze(-1).expand(-1, -1, D)  # [B, k, D]
+    return torch.gather(x, dim=1, index=topk)  # [B, k, D]
+
+
 
 class AttentionPooling(nn.Module):
     def __init__(self, input_dim=1536, num_output_tokens=50, num_heads=8):
@@ -118,7 +162,9 @@ class Uni_Sign(nn.Module):
                 self.feature_extractor = MobileNetV3FeatureExtractor(freeze_vision_encoder=freeze)
             elif vid_extractor == 'i3d':
                 self.feature_extractor = i3d(freeze_vision_encoder=freeze)
-            self.fusion_layer=nn.Linear(2*768, 768)
+            elif vid_extractor == 'convnext':
+                self.feature_extractor = ConvNeXtFeatureExtractor(freeze_vision_encoder=freeze)
+            self.fusion_layer=nn.Linear(768 *2, 768)
 
         self.apply(self._init_weights)
 
@@ -184,15 +230,57 @@ class Uni_Sign(nn.Module):
                             ).to(inputs_embeds.device) # 'transformers.tokenization_utils_base.BatchEncoding'
 
         prefix_embeds = self.mt5_model.encoder.embed_tokens(prefix_token['input_ids']) # tensor(1, 8, 768)
+        
+        # ## Here
+        # inputs_embeds = motion_filter(inputs_embeds, threshold=0.01, target_frames=64)
 
-        inputs_embeds = torch.cat([prefix_embeds, inputs_embeds], dim=1) #tensor(1, 233, 768)
+        # inputs_embeds = torch.cat([prefix_embeds, inputs_embeds], dim=1) #tensor(1, 233, 768)
 
-        if self.args.rgb_support and self.args.vid_extractor == 'i3d':
-            B = frames_embed.shape[0]
-            src_input['attention_mask'] = torch.ones(B, frames_embed.shape[1], device=frames_embed.device, dtype=prefix_token['attention_mask'].dtype)
-        attention_mask = torch.cat([prefix_token['attention_mask'],
-                                    src_input['attention_mask']], dim=1) #tensor(1, 233)
+        # if self.args.rgb_support and self.args.vid_extractor == 'i3d':
+        #     B = frames_embed.shape[0]
+        #     src_input['attention_mask'] = torch.ones(B, frames_embed.shape[1], device=frames_embed.device, dtype=prefix_token['attention_mask'].dtype)
+        # # attention_mask = torch.cat([prefix_token['attention_mask'],
+        # #                             src_input['attention_mask']], dim=1) #tensor(1, 233)
 
+        # # here
+        # B, T, _ = inputs_embeds.shape
+        # video_mask = (inputs_embeds.abs().sum(-1) > 0).long()  # [B, T], 1s where real tokens
+        # attention_mask = torch.cat([prefix_token['attention_mask'], video_mask], dim=1)
+        
+        # ========== Frame Reduction ==========
+        if self.args.attention_reduce_frames:
+            inputs_embeds = topk_attention_select(inputs_embeds, k=64)
+
+        elif self.args.reduce_frames:
+            inputs_embeds = motion_filter(inputs_embeds, threshold=0.01, target_frames=64)
+
+
+        # ========== Concatenate Prompt + Video ==========
+        inputs_embeds = torch.cat([prefix_embeds, inputs_embeds], dim=1)
+
+        # ========== Attention Mask ==========
+        B, T, _ = inputs_embeds.shape
+        prefix_len = prefix_token['attention_mask'].shape[1]
+
+        # Sanity: full attention mask should match total tokens
+        expected_total_len = T
+        prefix_mask = prefix_token['attention_mask']
+
+        # Create attention mask for video part
+        if self.args.reduce_frames or (self.args.rgb_support and self.args.vid_extractor == 'i3d'):
+            video_mask = (inputs_embeds[:, prefix_len:].abs().sum(-1) > 0).long()  # [B, T - prefix_len]
+        else:
+            video_mask = src_input['attention_mask']
+
+        # Padding if needed
+        if video_mask.shape[1] != T - prefix_len:
+            diff = (T - prefix_len) - video_mask.shape[1]
+            video_mask = F.pad(video_mask, (0, diff), value=0)
+
+        attention_mask = torch.cat([prefix_mask, video_mask], dim=1)
+
+
+        
         tgt_input_tokenizer = self.mt5_tokenizer(tgt_input['gt_sentence'], 
                                                 return_tensors="pt", 
                                                 padding=True,
