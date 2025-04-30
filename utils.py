@@ -535,11 +535,12 @@ def get_args_parser():
     
     # select label smooth
     parser.add_argument("--label_smoothing", default=0.2, type=float)
-    parser.add_argument("--vid_extractor", default=None, choices=['resnet','EfficientNetV2','vit','squeezenet', 'mobilenet', 'i3d', 'convnext'])
+    parser.add_argument("--vid_extractor", default=None, choices=['resnet','resnet_reduced','EfficientNetV2','vit','squeezenet', 'mobilenet', 'i3d', 'convnext'])
     parser.add_argument("--freeze_vision_encoder", action='store_true')
     parser.add_argument("--skeleton_support", action='store_true')
     parser.add_argument("--skeleton_extractor", default=None,choices=['unisign'])
     
+    parser.add_argument('--show_predictions', action='store_true')
     parser.add_argument('--reduce_frames', action='store_true', help='Reduce frames using motion filter before LLM input.')
     parser.add_argument('--attention_reduce_frames', action='store_true', help='Use attention to reduce frame count.')
     parser.add_argument('--llm_model', type=str, default='mt5', choices=['mt5', 't5', 'flan-t5'], help='Which LLM to use for decoding the video sequence.')

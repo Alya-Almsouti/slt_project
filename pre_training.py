@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 
 from models import Uni_Sign
 import utils as utils
-from datasets import S2T_Dataset_news
+from datasets import SLT_Dataset
 
 import wandb
 import os
@@ -27,13 +27,8 @@ def main(args):
 
     utils.set_seed(args.seed)
 
-    # wandb.init(
-    #     project="Uni-Sign",
-    #     name=args.run_name if hasattr(args, 'run_name') else 'Uni-Sign-15ksubset - stage 2',
-    #     config=vars(args)
-    # )
     print(f"Creating dataset:")
-    train_data = S2T_Dataset_news(path=train_label_paths[args.dataset], 
+    train_data = SLT_Dataset(path=train_label_paths[args.dataset], 
                                   args=args, phase='train')
     print('Training data Length: ', len(train_data))
     train_sampler = torch.utils.data.distributed.DistributedSampler(train_data,shuffle=True)
@@ -44,29 +39,26 @@ def main(args):
                                  sampler=train_sampler, 
                                  pin_memory=args.pin_mem,
                                  drop_last=True)
-    print(f"2Memory allocated: {torch.cuda.memory_allocated() / 1e9} GB")
-    dev_data = S2T_Dataset_news(path=dev_label_paths[args.dataset], 
+    dev_data = SLT_Dataset(path=dev_label_paths[args.dataset], 
                                 args=args, phase='dev')
+    dev_data_subset = torch.utils.data.Subset(dev_data, range(100))
     print('Dev Data Length: ', len(dev_data))
-    dev_sampler = torch.utils.data.distributed.DistributedSampler(dev_data,shuffle=False)
-    dev_dataloader = DataLoader(dev_data,
+    dev_sampler = torch.utils.data.distributed.DistributedSampler(dev_data_subset,shuffle=False)
+    dev_dataloader = DataLoader(dev_data_subset,
                                  batch_size=args.batch_size,
                                  num_workers=args.num_workers, 
                                  collate_fn=dev_data.collate_fn,
                                  sampler=dev_sampler, 
                                  pin_memory=args.pin_mem)
 
-    print(f"3Memory allocated: {torch.cuda.memory_allocated() / 1e9} GB")
     print(f"Creating model:")
     model = Uni_Sign(
                     args=args,
                     )
-    (print('hereno?'))
+
     model.cuda()
     model.train()
-    print(f"4Memory allocated: {torch.cuda.memory_allocated() / 1e9} GB")
-    # Watch model with wandb
-    # wandb.watch(model, log="all", log_freq=100)
+
 
     for param in model.parameters():
         if param.requires_grad:
@@ -105,7 +97,7 @@ def main(args):
     
     model, optimizer, lr_scheduler = utils.init_deepspeed(args, model, optimizer, lr_scheduler)
     model_without_ddp = model.module.module
-    # print(model_without_ddp)
+
     print(optimizer)
 
     output_dir = Path(args.output_dir)
@@ -122,8 +114,6 @@ def main(args):
     print(f"Start training for {args.epochs} epochs")
 
     for epoch in range(0, args.epochs):
-        # if args.distributed:
-        #     train_sampler.set_epoch(epoch)
         
         train_stats = train_one_epoch(args, model, train_dataloader, optimizer, epoch, model_without_ddp=model_without_ddp)
 
@@ -135,10 +125,7 @@ def main(args):
                 }, checkpoint_path)
         test_stats = evaluate(args, dev_dataloader, model, model_without_ddp)
         print(f"BLEU-4 of the network on the {len(dev_dataloader)} dev videos: {test_stats['bleu4']:.2f}")
-
         
-        
-
         if max_accuracy < test_stats["bleu4"]:
             max_accuracy = test_stats["bleu4"]
             if args.output_dir and utils.is_main_process():
@@ -259,10 +246,15 @@ def evaluate(args, data_loader, model, model_without_ddp):
     tgt_pres = pad_sequence(tgt_pres,batch_first=True,padding_value=padding_value)
     tgt_pres = tokenizer.batch_decode(tgt_pres, skip_special_tokens=True)
             
-    if args.dataset == 'CSL_News':
-        tgt_pres = [' '.join(list(r.replace(" ",'').replace("\n",''))) for r in tgt_pres]
-        tgt_refs = [' '.join(list(r.replace("，", ',').replace("？","?").replace(" ",''))) for r in tgt_refs]
-
+    if args.dataset == 'CSL_News' or args.dataset == 'Open_ASL':
+        tgt_pres_pros = [' '.join(list(r.replace(" ",'').replace("\n",''))) for r in tgt_pres]
+        tgt_refs_pros = [' '.join(list(r.replace("，", ',').replace("？","?").replace(" ",''))) for r in tgt_refs]
+    
+    if args.show_predictions:
+        print("\nSample Predictions vs References:\n")
+        for i in range(100):  # Show first 5 examples
+            print(f"[{i}] Prediction: {tgt_pres[i]}")
+            print(f"[{i}] Reference : {tgt_refs[i]}\n")
     bleu_dict, rouge_score = translation_performance(tgt_refs, tgt_pres)
     for k,v in bleu_dict.items():
         metric_logger.meters[k].update(v)

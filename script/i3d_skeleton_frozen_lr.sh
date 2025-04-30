@@ -1,4 +1,4 @@
-output_dir=out/convnext_with_t5
+output_dir=out/i3d_skeleton_frozen_lower_lr
 
 deepspeed --include localhost:0 --master_port 29511 pre_training.py \
    --batch-size 2 \
@@ -10,8 +10,7 @@ deepspeed --include localhost:0 --master_port 29511 pre_training.py \
    --output_dir $output_dir \
    --dataset CSL_News \
    --rgb_support \
-   --vid_extractor convnext \
-   --freeze_vision_encoder \
+   --vid_extractor i3d \
    --skeleton_support \
    --skeleton_extractor unisign \
-   --llm_model flan-t5
+   --freeze_vision_encoder

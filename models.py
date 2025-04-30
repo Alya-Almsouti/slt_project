@@ -9,7 +9,7 @@ import math
 from transformers import MT5ForConditionalGeneration, T5Tokenizer 
 import warnings
 from config import mt5_path
-# from pytorch_i3d.pytorch_i3d import InceptionI3d
+from pytorch_i3d.pytorch_i3d import InceptionI3d
 from vid_extractors import ConvNeXtFeatureExtractor, ResNetFeatureExtractor, EfficientNetV2FeatureExtractor, ViTFeatureExtractor, MobileNetV3FeatureExtractor, i3d
 from keypoints_extractor import UniSignGNNSkeletonExtractor
 import torch.nn.functional as F
@@ -48,7 +48,6 @@ def _no_grad_trunc_normal_(tensor, mean, std, a, b):
         # Clamp to ensure it's in the proper range
         tensor.clamp_(min=a, max=b)
         return tensor
-
 
 def trunc_normal_(tensor, mean=0., std=1., a=-2., b=2.):
     # type: (Tensor, float, float, float, float) -> Tensor
@@ -144,7 +143,6 @@ class Uni_Sign(nn.Module):
         self.args = args
         
         if self.args.skeleton_support:
-
             skeleton_extractor = self.args.skeleton_extractor
             if skeleton_extractor == 'unisign':
                 self.skeleton_extractor = UniSignGNNSkeletonExtractor(args)
@@ -153,7 +151,7 @@ class Uni_Sign(nn.Module):
             vid_extractor = self.args.vid_extractor
             freeze = True if self.args.freeze_vision_encoder else False
             if vid_extractor == 'resnet':
-                self.feature_extractor = ResNetFeatureExtractor(freeze_vision_encoder=freeze)
+                self.feature_extractor = ResNetFeatureExtractor(freeze_vision_encoder=freeze, to_reduce = False)
             elif vid_extractor == 'EfficientNetV2':
                 self.feature_extractor = EfficientNetV2FeatureExtractor(freeze_vision_encoder=freeze)
             elif vid_extractor == 'vit': 
@@ -164,6 +162,8 @@ class Uni_Sign(nn.Module):
                 self.feature_extractor = i3d(freeze_vision_encoder=freeze)
             elif vid_extractor == 'convnext':
                 self.feature_extractor = ConvNeXtFeatureExtractor(freeze_vision_encoder=freeze)
+            elif vid_extractor == 'resnet_reduced':
+                self.feature_extractor = ResNetFeatureExtractor(freeze_vision_encoder=freeze, to_reduce = True)
             self.fusion_layer=nn.Linear(768 *2, 768)
 
         self.apply(self._init_weights)
@@ -182,43 +182,20 @@ class Uni_Sign(nn.Module):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
 
-    def maybe_autocast(self, dtype=torch.float32):
-        # if on cpu, don't use autocast
-        # if on gpu, use autocast with dtype if provided, otherwise use torch.float16
-        # enable_autocast = self.device != torch.device("cpu")
-        enable_autocast = True
-
-        if enable_autocast:
-            return torch.cuda.amp.autocast(dtype=dtype)
-        else:
-            return contextlib.nullcontext()
 
     def forward(self, src_input, tgt_input):
-        """ src_input : dict dict_keys([
-        'body' tensor(1, 255, 9, 3) #second dimension is different between
-        'attention_mask', tensor (1, 255)
-        'name_batch', list (1)
-        'src_length_batch', tensor(1)
-        'left', 
-        'right',
-        'face_all'])
-        tgt_input : dict dict_keys(['gt_sentence' list
-        , 'gt_gloss' list
-        ])
-        """
         
         if self.args.rgb_support:
             frames_embed = self.feature_extractor(src_input['frames'])
             inputs_embeds = frames_embed            
 
         if self.args.skeleton_support:
-            if self.args.vid_extractor == 'i3d':
+            if self.args.vid_extractor == 'i3d' or self.args.vid_extractor == 'resnet_reduced' :
                 skeleton_embeds = self.skeleton_extractor(src_input, T_target = frames_embed.shape[1])
             else:
                 skeleton_embeds = self.skeleton_extractor(src_input)
             inputs_embeds = skeleton_embeds
-            # print("frames embed: ", frames_embed.shape)
-            # print("skeelton_embped: ", skeleton_embeds.shape)
+            
             if self.args.rgb_support:
                 inputs_embeds = self.fusion_layer(torch.cat([skeleton_embeds, frames_embed], dim=-1))
     
@@ -234,53 +211,51 @@ class Uni_Sign(nn.Module):
         # ## Here
         # inputs_embeds = motion_filter(inputs_embeds, threshold=0.01, target_frames=64)
 
-        # inputs_embeds = torch.cat([prefix_embeds, inputs_embeds], dim=1) #tensor(1, 233, 768)
+        inputs_embeds = torch.cat([prefix_embeds, inputs_embeds], dim=1) #tensor(1, 233, 768)
 
-        # if self.args.rgb_support and self.args.vid_extractor == 'i3d':
-        #     B = frames_embed.shape[0]
-        #     src_input['attention_mask'] = torch.ones(B, frames_embed.shape[1], device=frames_embed.device, dtype=prefix_token['attention_mask'].dtype)
-        # # attention_mask = torch.cat([prefix_token['attention_mask'],
-        # #                             src_input['attention_mask']], dim=1) #tensor(1, 233)
+        if self.args.rgb_support and (self.args.vid_extractor == 'i3d' or self.args.vid_extractor == 'resnet_reduced') :
+            B = frames_embed.shape[0]
+            src_input['attention_mask'] = torch.ones(B, frames_embed.shape[1], device=frames_embed.device, dtype=prefix_token['attention_mask'].dtype)
+        attention_mask = torch.cat([prefix_token['attention_mask'],
+                                    src_input['attention_mask']], dim=1) #tensor(1, 233)
 
         # # here
         # B, T, _ = inputs_embeds.shape
         # video_mask = (inputs_embeds.abs().sum(-1) > 0).long()  # [B, T], 1s where real tokens
         # attention_mask = torch.cat([prefix_token['attention_mask'], video_mask], dim=1)
         
-        # ========== Frame Reduction ==========
-        if self.args.attention_reduce_frames:
-            inputs_embeds = topk_attention_select(inputs_embeds, k=64)
+        # # ========== Frame Reduction ==========
+        # if self.args.attention_reduce_frames:
+        #     inputs_embeds = topk_attention_select(inputs_embeds, k=64)
 
-        elif self.args.reduce_frames:
-            inputs_embeds = motion_filter(inputs_embeds, threshold=0.01, target_frames=64)
-
-
-        # ========== Concatenate Prompt + Video ==========
-        inputs_embeds = torch.cat([prefix_embeds, inputs_embeds], dim=1)
-
-        # ========== Attention Mask ==========
-        B, T, _ = inputs_embeds.shape
-        prefix_len = prefix_token['attention_mask'].shape[1]
-
-        # Sanity: full attention mask should match total tokens
-        expected_total_len = T
-        prefix_mask = prefix_token['attention_mask']
-
-        # Create attention mask for video part
-        if self.args.reduce_frames or (self.args.rgb_support and self.args.vid_extractor == 'i3d'):
-            video_mask = (inputs_embeds[:, prefix_len:].abs().sum(-1) > 0).long()  # [B, T - prefix_len]
-        else:
-            video_mask = src_input['attention_mask']
-
-        # Padding if needed
-        if video_mask.shape[1] != T - prefix_len:
-            diff = (T - prefix_len) - video_mask.shape[1]
-            video_mask = F.pad(video_mask, (0, diff), value=0)
-
-        attention_mask = torch.cat([prefix_mask, video_mask], dim=1)
+        # elif self.args.reduce_frames:
+        #     inputs_embeds = motion_filter(inputs_embeds, threshold=0.01, target_frames=64)
 
 
-        
+        # # ========== Concatenate Prompt + Video ==========
+        # inputs_embeds = torch.cat([prefix_embeds, inputs_embeds], dim=1)
+
+        # # ========== Attention Mask ==========
+        # B, T, _ = inputs_embeds.shape
+        # prefix_len = prefix_token['attention_mask'].shape[1]
+
+        # # Sanity: full attention mask should match total tokens
+        # expected_total_len = T
+        # prefix_mask = prefix_token['attention_mask']
+
+        # # Create attention mask for video part
+        # if self.args.reduce_frames or (self.args.rgb_support and self.args.vid_extractor == 'i3d'):
+        #     video_mask = (inputs_embeds[:, prefix_len:].abs().sum(-1) > 0).long()  # [B, T - prefix_len]
+        # else:
+        #     video_mask = src_input['attention_mask']
+
+        # # Padding if needed
+        # if video_mask.shape[1] != T - prefix_len:
+        #     diff = (T - prefix_len) - video_mask.shape[1]
+        #     video_mask = F.pad(video_mask, (0, diff), value=0)
+
+        # attention_mask = torch.cat([prefix_mask, video_mask], dim=1)
+
         tgt_input_tokenizer = self.mt5_tokenizer(tgt_input['gt_sentence'], 
                                                 return_tensors="pt", 
                                                 padding=True,

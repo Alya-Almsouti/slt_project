@@ -5,7 +5,7 @@ from torchvision.models import mobilenet_v3_small, MobileNet_V3_Small_Weights
 from torchvision.models import vit_b_16, ViT_B_16_Weights
 from torchvision.models import resnet18, ResNet18_Weights
 from torchvision import models
-# from pytorch_i3d.pytorch_i3d import InceptionI3d
+from pytorch_i3d.pytorch_i3d import InceptionI3d
 from torch import Tensor
 import torch
 import timm
@@ -18,6 +18,7 @@ import math
 from transformers import MT5ForConditionalGeneration, T5Tokenizer 
 import warnings
 from config import mt5_path
+import torch.nn.functional as F
 class i3d(nn.Module):
     def __init__(self, output_dim=768, freeze_vision_encoder=False):
         super().__init__()
@@ -146,9 +147,10 @@ class ConvNeXtFeatureExtractor(nn.Module):
         return projected.view(B, T, -1)
 
 class ResNetFeatureExtractor(nn.Module):
-    def __init__(self, output_dim=768, freeze_vision_encoder = False):
+    def __init__(self, output_dim=768, freeze_vision_encoder = False, to_reduce=False):
         super().__init__()
         # Load a pretrained ResNet and remove the classifier
+        self.to_reduce = to_reduce
         resnet = resnet18(weights=ResNet18_Weights.DEFAULT)
         self.feature_dim = resnet.fc.in_features  
 
@@ -169,4 +171,10 @@ class ResNetFeatureExtractor(nn.Module):
 
         projected = self.projector(feats)  # [B*T, 768]
         output = projected.view(B, T, -1)  # reshape back to [B, T, 768]
+
+        if self.to_reduce:
+            target_num_frames = T // 8
+            output = output.transpose(1, 2) 
+            output = F.adaptive_avg_pool1d(output, output_size=target_num_frames) 
+            output = output.transpose(1, 2)  # [B, target_T, 768]
         return output
