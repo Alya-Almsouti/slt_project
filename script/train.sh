@@ -1,4 +1,4 @@
-output_dir=out/resent_eval
+output_dir=out/i3d_skeleton_frozen_lower_lr
 
 deepspeed --include localhost:0 --master_port 29511 pre_training.py \
    --batch-size 2 \
@@ -8,7 +8,9 @@ deepspeed --include localhost:0 --master_port 29511 pre_training.py \
    --lr 5e-5 \
    --quick_break 2048 \
    --output_dir $output_dir \
-   --dataset CSL_News \
+   --dataset Open_ASL \
    --rgb_support \
-   --vid_extractor resnet \
-   --eval
+   --vid_extractor i3d \
+   --skeleton_support \
+   --skeleton_extractor unisign \
+   --freeze_vision_encoder

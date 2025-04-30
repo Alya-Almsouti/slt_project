@@ -1,87 +1,133 @@
-<h3 align="center"><a href="" style="color:#9C276A">
-Uni-Sign: Toward Unified Sign Language Understanding at Scale</a></h3>
-<h5 align="center"> 
-If our project helps you, please give us a star🌟 on GitHub, that would motivate us a lot!
-</h2>
+# SLT Project – Sign Language Translation
 
-<h5 align="center">
+Sign Language Translation (SLT) plays a crucial role in making communication more inclusive for the Deaf and Hard-of-Hearing community. By leveraging AI and deep learning, SLT systems aim to automatically convert sign language videos into spoken language, bridging the accessibility gap in education, media, and daily communication.
 
-[![arXiv](https://img.shields.io/badge/Arxiv-2501.15187-AD1C18.svg?logo=arXiv)](https://arxiv.org/abs/2501.15187) 
-[![CSL-Dataset](https://img.shields.io/badge/HuggingFace🤗-%20CSL%20News-blue.svg)](https://huggingface.co/datasets/ZechengLi19/CSL-News)
-[![CSL-Dataset](https://img.shields.io/badge/BaiDu☁-%20CSL%20News-green.svg)](https://pan.baidu.com/s/17W6kIreNMHYtD4y2llKmDg?pwd=ncvo) 
 
-[![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/uni-sign-toward-unified-sign-language/sign-language-recognition-on-ms-asl)](https://paperswithcode.com/sota/sign-language-recognition-on-ms-asl?p=uni-sign-toward-unified-sign-language)
-[![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/uni-sign-toward-unified-sign-language/sign-language-recognition-on-wlasl100)](https://paperswithcode.com/sota/sign-language-recognition-on-wlasl100?p=uni-sign-toward-unified-sign-language)
-[![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/uni-sign-toward-unified-sign-language/sign-language-recognition-on-wlasl-2000)](https://paperswithcode.com/sota/sign-language-recognition-on-wlasl-2000?p=uni-sign-toward-unified-sign-language)
-[![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/uni-sign-toward-unified-sign-language/sign-language-recognition-on-csl-daily)](https://paperswithcode.com/sota/sign-language-recognition-on-csl-daily?p=uni-sign-toward-unified-sign-language)
-[![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/uni-sign-toward-unified-sign-language/gloss-free-sign-language-translation-on-csl)](https://paperswithcode.com/sota/gloss-free-sign-language-translation-on-csl?p=uni-sign-toward-unified-sign-language)
-[![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/uni-sign-toward-unified-sign-language/gloss-free-sign-language-translation-on-2)](https://paperswithcode.com/sota/gloss-free-sign-language-translation-on-2?p=uni-sign-toward-unified-sign-language)
-[![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/uni-sign-toward-unified-sign-language/gloss-free-sign-language-translation-on-3)](https://paperswithcode.com/sota/gloss-free-sign-language-translation-on-3?p=uni-sign-toward-unified-sign-language)
-</h5>
+## 🔄 Updates on Uni-Sign Repo
 
-![Uni-Sign](docs/framework.png)
+While this project adopts the training and validation pipelines from the original [Uni-Sign](https://github.com/yc930401/Uni-Sign), we made significant architectural and design modifications to improve modularity, extensibility, and compatibility.
 
-## 💥 News
-[2025/1/25] This [paper](https://openreview.net/pdf?id=0Xt7uT04cQ) is accepted by `ICLR 2025` 🎉🎉!
+### 📁 Dataset Compatibility (`dataset.py`)
 
-[2025/2/24] Release CSL-News dataset and code implementation.
+- The dataset class was redesigned to support the [OpenASL](https://github.com/chevalierNoir/OpenASL) dataset.
+- Changes include customized video/keypoint loading and preprocessing logic tailored for OpenASL's structure.
 
-## 🛠️ Installation
-We suggest to create a new conda environment. 
+---
+
+### 🧠 Modular Model Design (`models.py`)
+
+We refactored the model to support plug-and-play **visual and keypoint feature extractors**, enabling easy experimentation with different backbones and input modalities:
+
+#### 🎞️ RGB Video Feature Extractors
+
+The model supports interchangeable video encoders via `args.vid_extractor`.
+
+**Supported options:**
+
+- `resnet18`
+- `EfficientNetV2`
+- `ViT`
+- `ConvNeXt`
+- `i3d`
+- `MobileNetV3`
+
+**How to use:**
+
+- Set `--rgb_support` in bash file
+- Choose extractor with `--vid_extractor resnet` (or any from the list)
+
+**To add your own:**
+
+1. Implement the extractor in `vid_extractors.py`
+2. Register it in `models.py` with an `if video_extractor == 'your_extractor'` clause
+
+
+---
+
+#### 🕴️ Skeleton Keypoint Feature Extractors
+
+The model also supports modular skeleton-based extractors, such as `UniSignGNNSkeletonExtractor`.
+
+**How to use:**
+
+- Set `--skeleton_support` in bash file
+- Choose extractor with `--skeleton_extractor unisign`
+
+**To add your own:**
+
+1. Implement your extractor in `keypoints_extractor.py`
+2. Register it in `models.py` with an `if skeleton_extractor == 'your_extractor'` clause
+
+---
+
+#### 🔗 Multi-Modal Feature Fusion
+
+If both RGB and skeleton inputs are enabled:
+
+- Extracted features are concatenated.
+- A linear fusion layer (`fusion_layer`) maps them into the input space of the mT5 encoder.
+
+---
+
+This modular structure enables rapid experimentation with different input modalities and backbone architectures for sign language translation.
+
+
+## 📦 Installation & Setup
+
 ```bash
-# create environment
-conda create --name Uni-Sign python=3.9
-conda activate Uni-Sign
-# install other relevant dependencies
+# 1. Clone the repository
+git clone https://github.com/Alya-Almsouti/slt_project.git
+cd slt_project
+
+# 2. Create a new conda environment
+conda create -n slt_env python=3.10
+conda activate slt_env
+
+# 3. Install PyTorch3D (follow instructions based on your CUDA version)
+→ https://github.com/facebookresearch/pytorch3d/blob/main/INSTALL.md
+
+# 4. Install dependencies
 pip install -r requirements.txt
+
+# 5. Download the OpenASL dataset (follow guide)
+ → https://github.com/chevalierNoir/OpenASL
+
+
+# 7. Download the pretrained mT5 model
+python download_scripts/install_mt5_model.py
 ```
+## 🚀 Usage
 
-## 📖 Preparation
-Please follow the instructions provided in [DATASET.md](./docs/DATASET.md) for data preparation.
+Once setup is complete, you can start training or evaluating models using:
 
-## 🔨 Training & Evaluation
-All scripts must be executed within the Uni-Sign directory.
-### Training
-**Stage 1**: pose-only pre-training.
 ```bash
-bash ./script/train_stage1.sh
-```
-**Stage 2**: RGB-pose pre-training.
-```bash
-bash ./script/train_stage2.sh
-```
-**Stage 3**: downstream fine-tuning.
-```bash
-bash ./script/train_stage3.sh
+#for training:
+bash script/train.sh 
+
+#for evaluation:
+bash script/eval.sh
 ```
 
-### Evaluation
-After completing stage 3 fine-tuning, performance evaluation on a single GPU can be performed using the following command:
-```bash
-bash ./script/eval_stage3.sh
-```
+## 📁 Project Structure
 
-## 👨‍💻 Todo
-- [x] Release CSL-News dataset
-- [x] Release Uni-Sign implementation 
-
-## 📮 Contact
-If you have any questions, please feel free to contact Zecheng Li (lizecheng19@gmail.com). Thank you.
-
-## 👍 Acknowledgement
-The codebase of Uni-Sign is adapted from [GFSLT-VLP](https://github.com/zhoubenjia/GFSLT-VLP). We are also grateful for the following projects our Uni-Sign arise from:
-* 🤟[SSVP-SLT](https://github.com/facebookresearch/ssvp_slt): a excellent sign language translation framework! 
-* 🏃️[MMPose](https://github.com/open-mmlab/mmpose): an open-source toolbox for pose estimation.
-* 🤠[FUNASR](https://github.com/modelscope/FunASR): a high-performance speech-to-text toolkit.
+- `models.py` – Main model architecture, including feature fusion and MT5 integration  
+- `vid_extractors.py` – Video-based feature extractor classes (e.g., ResNet, ViT, i3d)  
+- `keypoints_extractor.py` – Skeleton/keypoint-based feature extractor classes  
+- `dataset.py` – Custom dataset class adapted for OpenASL  
+- `pre_training.py` – Main training and evaluation pipeline  
+- `config.py` – Centralized configuration for paths and model options  
+- `download_scripts/` – Scripts to download pretrained models (e.g., mT5)  
+- `output_vis/` –  Scripts to see model performance using saved outputs from training 
+- `script/` – Shell scripts to launch training and evaluation  
 
 
-## 📑 Citation
-If you find Uni-Sign useful for your research and applications, please cite using this BibTeX:
-```
-@article{li2025uni,
-  title={Uni-Sign: Toward Unified Sign Language Understanding at Scale},
-  author={Li, Zecheng and Zhou, Wengang and Zhao, Weichao and Wu, Kepeng and Hu, Hezhen and Li, Houqiang},
-  journal={arXiv preprint arXiv:2501.15187},
-  year={2025}
-}
-```
+## 📜 License
+
+This project is for academic and research purposes only.
+
+---
+
+### 🔗 Credits
+
+- Original framework: [Uni-Sign](https://github.com/yc930401/Uni-Sign)  
+- Dataset: [OpenASL](https://github.com/chevalierNoir/OpenASL)
