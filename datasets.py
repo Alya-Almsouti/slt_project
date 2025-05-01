@@ -207,7 +207,7 @@ class SLT_Dataset(Base_Dataset):
 
         with path.open(encoding='utf-8') as f:
             self.annotation = json.load(f)
-        if self.args.dataset == "CSL_News" or self.args.daraset == "Open_ASL" :
+        if self.args.dataset == "CSL_News" or self.args.dataset == "Open_ASL" or self.args.dataset == "sample" :
             self.pose_dir = pose_dirs[args.dataset]
             self.rgb_dir = rgb_dirs[args.dataset]
         else:

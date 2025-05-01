@@ -106,6 +106,9 @@ bash script/train.sh
 
 #for evaluation:
 bash script/eval.sh
+
+#for demo - trying a bunch of samples (add samples in data_sample/sample.json the same way the current sample is there)
+bash script/sample.sh
 ```
 
 ## 📁 Project Structure

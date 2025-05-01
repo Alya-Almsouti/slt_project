@@ -528,7 +528,7 @@ def get_args_parser():
     parser.add_argument("--max_length", default=256, type=int)
     
     # select dataset
-    parser.add_argument("--dataset", default="Open_ASL", choices=['CSL_News', "CSL_Daily", "WLASL", "Open_ASL"])
+    parser.add_argument("--dataset", default="Open_ASL", choices=['CSL_News', "CSL_Daily", "WLASL", "Open_ASL", "sample"])
     
     # select task
     parser.add_argument("--task", default="SLT", choices=['SLT', "ISLR", "CSLR"])

@@ -41,10 +41,9 @@ def main(args):
                                  drop_last=True)
     dev_data = SLT_Dataset(path=dev_label_paths[args.dataset], 
                                 args=args, phase='dev')
-    dev_data_subset = torch.utils.data.Subset(dev_data, range(100))
     print('Dev Data Length: ', len(dev_data))
-    dev_sampler = torch.utils.data.distributed.DistributedSampler(dev_data_subset,shuffle=False)
-    dev_dataloader = DataLoader(dev_data_subset,
+    dev_sampler = torch.utils.data.distributed.DistributedSampler(dev_data,shuffle=False)
+    dev_dataloader = DataLoader(dev_data,
                                  batch_size=args.batch_size,
                                  num_workers=args.num_workers, 
                                  collate_fn=dev_data.collate_fn,
@@ -252,7 +251,7 @@ def evaluate(args, data_loader, model, model_without_ddp):
     
     if args.show_predictions:
         print("\nSample Predictions vs References:\n")
-        for i in range(100):  # Show first 5 examples
+        for i in range(min(100, len(tgt_pres))):  # Show first 5 examples
             print(f"[{i}] Prediction: {tgt_pres[i]}")
             print(f"[{i}] Reference : {tgt_refs[i]}\n")
     bleu_dict, rouge_score = translation_performance(tgt_refs, tgt_pres)
