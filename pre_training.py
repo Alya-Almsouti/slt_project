@@ -247,8 +247,8 @@ def evaluate(args, data_loader, model, model_without_ddp):
     tgt_pres = tokenizer.batch_decode(tgt_pres, skip_special_tokens=True)
             
     if args.dataset == 'CSL_News' or args.dataset == 'Open_ASL':
-        tgt_pres_pros = [' '.join(list(r.replace(" ",'').replace("\n",''))) for r in tgt_pres]
-        tgt_refs_pros = [' '.join(list(r.replace("，", ',').replace("？","?").replace(" ",''))) for r in tgt_refs]
+        tgt_pres = [' '.join(list(r.replace(" ",'').replace("\n",''))) for r in tgt_pres]
+        tgt_refs = [' '.join(list(r.replace("，", ',').replace("？","?").replace(" ",''))) for r in tgt_refs]
     
     if args.show_predictions:
         print("\nSample Predictions vs References:\n")
