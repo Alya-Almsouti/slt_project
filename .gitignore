@@ -21,3 +21,4 @@ tools/*.mp4
 pretrained_weight/
 config.py
 pytorch_i3d
+output_vis/graphs
